@@ -196,8 +196,12 @@ static uint32_t _Atomic g_retired_node_pool_count = 0;
 
 /**
  * @brief Global OLS plane storage.
+ *
+ * Left implicitly zero-initialized because the first member is an array of
+ * atomic pointers.  Some toolchains reject a brace-enclosed `{0}` initializer
+ * for an _Atomic pointer array element.
  */
-TTAK_VIS_DEFAULT ttak_ols_plane_t g_ols_static_plane = {0};
+TTAK_VIS_DEFAULT ttak_ols_plane_t g_ols_static_plane;
 
 /**
  * @brief Indicates whether the OLS plane and epoch subsystem have been initialized.

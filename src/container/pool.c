@@ -102,19 +102,6 @@ void ttak_object_pool_destroy(ttak_object_pool_t *pool) {
 void *ttak_object_pool_alloc(ttak_object_pool_t *pool) {
     ttak_spin_lock(&pool->lock);
 
-    /* Fast path: pop from the LIFO free list. */
-    if (pool->free_list) {
-        void *item = pool->free_list;
-        pool->free_list = *(void **)item;
-        pool->used_count++;
-        size_t idx = (size_t)((char *)item - (char *)pool->buffer) / pool->item_size;
-        size_t byte = idx >> 3;
-        uint8_t mask = (uint8_t)(1U << (idx & 7U));
-        pool->bitmap[byte] |= mask;
-        ttak_spin_unlock(&pool->lock);
-        return item;
-    }
-
     if (pool->used_count >= pool->capacity) {
         ttak_spin_unlock(&pool->lock);
         return NULL;

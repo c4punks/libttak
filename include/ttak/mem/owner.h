@@ -6,6 +6,14 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+/* Forward declaration; full typedef lives in <ttak/mem/mem.h> to avoid cycles. */
+struct ttak_owner;
+
+/**
+ * @brief Sentinel indicating that a memory pointer has no owning context.
+ */
+#define TTAK_NO_OWNER ((struct ttak_owner *)0)
+
 /**
  * @brief Function pointer type for tasks executed within the owner's context.
  * 
@@ -30,15 +38,16 @@ typedef enum {
  * Acts as a sandbox/container for resources and functions.
  * Ensures isolation and enforces safety policies.
  */
-typedef struct ttak_owner {
+struct ttak_owner {
     uint32_t id;                /**< Unique ID for bitmap tracking. */
     ttak_map_t *resources;      /**< Map storing owned resources (isolated variables). */
     ttak_map_t *functions;      /**< Map storing registered functions. */
     ttak_rwlock_t lock;         /**< RWLock for thread-safe access to the owner's state. */
     uint64_t creation_ts;       /**< Timestamp when this owner was created. */
     uint32_t policy_flags;      /**< Safety policy bitmask. */
-} ttak_owner_t;
+};
 
+typedef struct ttak_owner ttak_owner_t;
 typedef ttak_owner_t tt_owner_t;
 
 /**

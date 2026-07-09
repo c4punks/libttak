@@ -48,6 +48,7 @@ struct ttak_mem_tree {
     pthread_t cleanup_thread;           /**< Thread ID for the background automatic cleanup process. */
     _Atomic _Bool shutdown_requested;   /**< Flag to signal the cleanup thread to terminate. */
     _Atomic uint32_t pending_hints;     /**< Bitmask of pending hints from the memory manager. */
+    _Atomic _Bool cleanup_needed;       /**< True when there is a known candidate for release; avoids walking the tree when empty. */
 };
 
 /**

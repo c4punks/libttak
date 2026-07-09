@@ -39,6 +39,7 @@ void ttak_mem_tree_init(ttak_mem_tree_t *tree) {
     atomic_store(&tree->use_manual_cleanup, false);
     atomic_store(&tree->shutdown_requested, false);
     atomic_store(&tree->pending_hints, 0);
+    atomic_store(&tree->cleanup_needed, false);
 
     // Launch the background cleanup thread
     if (pthread_create(&tree->cleanup_thread, NULL, cleanup_thread_func, tree) != 0) {
@@ -233,7 +234,8 @@ void ttak_mem_tree_set_pressure_threshold(ttak_mem_tree_t *tree, size_t threshol
 void ttak_mem_tree_report_pressure(ttak_mem_tree_t *tree, size_t pressure_amount) {
     if (!tree) return;
     size_t new_pressure = atomic_fetch_add(&tree->garbage_pressure, pressure_amount) + pressure_amount;
-    
+    atomic_store(&tree->cleanup_needed, true);
+
     if (new_pressure >= atomic_load(&tree->pressure_threshold)) {
         pthread_mutex_lock(&tree->lock);
         pthread_cond_signal(&tree->cond);
@@ -294,8 +296,8 @@ void ttak_mem_tree_set_manual_cleanup(ttak_mem_tree_t *tree, _Bool manual_cleanu
 void ttak_mem_tree_perform_cleanup(ttak_mem_tree_t *tree, uint64_t now) {
     if (!tree) return;
 
-    // Check pressure first (Early Return)
-    if (atomic_load(&tree->garbage_pressure) == 0 && !atomic_load(&tree->use_manual_cleanup)) {
+    // Only walk the tree when there is a known candidate for release.
+    if (atomic_load(&tree->garbage_pressure) == 0 && !atomic_load(&tree->cleanup_needed)) {
         return;
     }
 
@@ -359,6 +361,11 @@ void ttak_mem_tree_perform_cleanup(ttak_mem_tree_t *tree, uint64_t now) {
         if (old_pressure < total_freed) {
             atomic_store(&tree->garbage_pressure, 0);
         }
+    }
+
+    // No remaining pressure means there is nothing left to clean up.
+    if (atomic_load(&tree->garbage_pressure) == 0) {
+        atomic_store(&tree->cleanup_needed, false);
     }
 }
 

@@ -100,18 +100,14 @@ void ttak_epoch_gc_init(ttak_epoch_gc_t *gc) {
     pthread_mutex_init(&gc->rotate_lock, NULL);
     pthread_cond_init(&gc->rotate_cond, NULL);
     atomic_store(&gc->shutdown_requested, false);
-    atomic_store(&gc->manual_rotation, false);
+    atomic_store(&gc->manual_rotation, true);
     atomic_store(&gc->min_rotate_ns, TTAK_EPOCH_GC_MIN_ROTATE_NS);
     atomic_store(&gc->max_rotate_ns, TTAK_EPOCH_GC_MAX_ROTATE_NS);
     atomic_store(&gc->pending_hints, 0);
+    /* Do not spawn a background rotate thread: it busy-waits in
+     * ttak_epoch_reclaim and consumes whole cores.  Callers rotate/reclaim
+     * explicitly. */
     gc->rotate_thread_started = false;
-
-    if (pthread_create(&gc->rotate_thread, NULL, epoch_gc_rotate_thread, gc) == 0) {
-        gc->rotate_thread_started = true;
-    } else {
-        fprintf(stderr, "[TTAK][epoch_gc] Failed to launch rotate thread, falling back to manual mode.\n");
-        atomic_store(&gc->manual_rotation, true);
-    }
 }
 
 /**
