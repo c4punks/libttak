@@ -313,12 +313,18 @@ static inline int __ttak_clzll(unsigned long long v) {
 
 #else
 #include <stdatomic.h>
-#define TTAK_FAST_ATOMIC_ADD_U64(ptr, val) __atomic_fetch_add((ptr), (val), __ATOMIC_RELAXED)
-#define TTAK_FAST_ATOMIC_ADD_U32(ptr, val) __atomic_fetch_add((ptr), (val), __ATOMIC_RELAXED)
-#define TTAK_FAST_ATOMIC_LOAD_U64(ptr) __atomic_load_n((ptr), __ATOMIC_RELAXED)
-#define TTAK_FAST_ATOMIC_STORE_U32(ptr, val) __atomic_store_n((ptr), (val), __ATOMIC_RELAXED)
-#define TTAK_FAST_ATOMIC_STORE_BOOL(ptr, val) __atomic_store_n((ptr), (val), __ATOMIC_RELAXED)
-#define TTAK_FAST_ATOMIC_XCHG_U64(ptr, val) __atomic_exchange_n((ptr), (val), __ATOMIC_RELAXED)
+#define TTAK_FAST_ATOMIC_ADD_U64(ptr, val) \
+    atomic_fetch_add_explicit((_Atomic uint64_t *)(ptr), (uint64_t)(val), memory_order_relaxed)
+#define TTAK_FAST_ATOMIC_ADD_U32(ptr, val) \
+    atomic_fetch_add_explicit((_Atomic uint32_t *)(ptr), (uint32_t)(val), memory_order_relaxed)
+#define TTAK_FAST_ATOMIC_LOAD_U64(ptr) \
+    atomic_load_explicit((_Atomic uint64_t *)(ptr), memory_order_relaxed)
+#define TTAK_FAST_ATOMIC_STORE_U32(ptr, val) \
+    atomic_store_explicit((_Atomic uint32_t *)(ptr), (uint32_t)(val), memory_order_relaxed)
+#define TTAK_FAST_ATOMIC_STORE_BOOL(ptr, val) \
+    atomic_store_explicit((_Atomic uint64_t *)(ptr), (uint64_t)((val) ? 1 : 0), memory_order_relaxed)
+#define TTAK_FAST_ATOMIC_XCHG_U64(ptr, val) \
+    atomic_exchange_explicit((_Atomic uint64_t *)(ptr), (uint64_t)(val), memory_order_relaxed)
 #endif
 
 /** @brief Variable cleanup attribute for GCC/Clang; no-op on others. */
