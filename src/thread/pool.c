@@ -170,8 +170,6 @@ static void pool_force_shutdown(ttak_thread_pool_t *pool) {
  * @return Pointer to the created pool or NULL on failure.
  */
 ttak_thread_pool_t *ttak_thread_pool_create(size_t num_threads, int default_nice, uint64_t now) {
-    const pthread_attr_t *attr_for_threads = NULL;
-
     /* Ensure smart scheduler is ready */
     ttak_scheduler_init();
 
