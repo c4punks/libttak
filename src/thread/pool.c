@@ -170,20 +170,13 @@ static void pool_force_shutdown(ttak_thread_pool_t *pool) {
  * @return Pointer to the created pool or NULL on failure.
  */
 ttak_thread_pool_t *ttak_thread_pool_create(size_t num_threads, int default_nice, uint64_t now) {
-    /* Initialize pthread attribute if available so Windows shim can shrink stacks */
-    pthread_attr_t attr;
     const pthread_attr_t *attr_for_threads = NULL;
-    if (pthread_attr_init(&attr) == 0) {
-        pthread_attr_setstacksize(&attr, 1024 * 512);
-        attr_for_threads = &attr;
-    }
 
     /* Ensure smart scheduler is ready */
     ttak_scheduler_init();
 
     ttak_thread_pool_t *pool = (ttak_thread_pool_t *)ttak_mem_alloc_raw(sizeof(ttak_thread_pool_t), __TTAK_UNSAFE_MEM_FOREVER__, now);
     if (!pool) {
-        if (attr_for_threads) pthread_attr_destroy(&attr);
         return NULL;
     }
 
@@ -217,7 +210,6 @@ ttak_thread_pool_t *ttak_thread_pool_create(size_t num_threads, int default_nice
         }
         pthread_mutex_destroy(&pool->pool_lock);
         pthread_cond_destroy(&pool->task_cond);
-        if (attr_for_threads) pthread_attr_destroy(&attr);
         ttak_mem_free(pool);
         return NULL;
     }
@@ -228,7 +220,6 @@ ttak_thread_pool_t *ttak_thread_pool_create(size_t num_threads, int default_nice
             fprintf(stderr, "[FATAL] Failed to allocate worker %zu\n", i);
             pool->num_threads = i;
             pool_force_shutdown(pool);
-            if (attr_for_threads) pthread_attr_destroy(&attr);
             return NULL;
         }
         pool->workers[i]->pool = pool;
@@ -244,7 +235,6 @@ ttak_thread_pool_t *ttak_thread_pool_create(size_t num_threads, int default_nice
             pool->workers[i] = NULL;
             pool->num_threads = i;
             pool_force_shutdown(pool);
-            if (attr_for_threads) pthread_attr_destroy(&attr);
             return NULL;
         }
         pool->workers[i]->wrapper->nice_val = default_nice;
@@ -253,17 +243,15 @@ ttak_thread_pool_t *ttak_thread_pool_create(size_t num_threads, int default_nice
         pool->workers[i]->wrapper->jmp_magic = 0;
         pool->workers[i]->wrapper->jmp_tid = 0;
 
-        int rc = pthread_create(&pool->workers[i]->thread, attr_for_threads, ttak_worker_routine, pool->workers[i]);
+        int rc = pthread_create(&pool->workers[i]->thread, NULL, ttak_worker_routine, pool->workers[i]);
         if (rc != 0) {
             fprintf(stderr, "[FATAL] Failed to create worker thread %zu: %d\n", i, rc);
             pool->num_threads = i;
             pool_force_shutdown(pool);
-            if (attr_for_threads) pthread_attr_destroy(&attr);
             return NULL;
         }
     }
 
-    if (attr_for_threads) pthread_attr_destroy(&attr);
     return pool;
 }
 
