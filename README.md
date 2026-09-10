@@ -2,7 +2,7 @@
 
 ![Memuh the sea rabbit](./mascot.png)
 ![GitHub Copilot CI Benchmark](./bench/ttl-cache-multithread-bench/copilot_ci_benchmark.svg)
-[Book](http://github.com/religiya-serdtsa/libttak-books)
+[Book](http://github.com/c4punks/libttak-books)
 
 **Deterministic systems runtime for C.**
 
