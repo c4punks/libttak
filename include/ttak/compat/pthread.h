@@ -10,9 +10,13 @@
  * This file supplies a minimal but correct compatibility layer built on
  * top of the Windows synchronisation API (SRWLOCK, CONDITION_VARIABLE,
  * CRITICAL_SECTION, CreateThread / WaitForSingleObject, InitOnceExecuteOnce).
+ *
+ * On WASI (preview1), the single-threaded host has no pthread
+ * implementation and sysroots often ship no <pthread.h> at all; a
+ * self-contained single-threaded stub set is provided instead.
  */
 
-#if !defined(_MSC_VER) || !defined(_WIN32)
+#if (!defined(_MSC_VER) || !defined(_WIN32)) && !defined(__wasi__)
 #  if defined(__has_include_next)
 #    if __has_include_next(<pthread.h>)
 #      include_next <pthread.h>
@@ -24,6 +28,150 @@
 
 #ifndef TTAK_PTHREAD_SHIM_H
 #define TTAK_PTHREAD_SHIM_H
+
+#if defined(__wasi__)
+/* -----------------------------------------------------------------------
+ * WASI (preview1): single-threaded host with no pthread implementation.
+ * wasi-libc sysroots commonly ship no <pthread.h> at all, and searching
+ * host include directories leaks glibc headers, so this branch provides
+ * self-contained stubs. Synchronisation primitives cannot contend on a
+ * single-threaded host: mutexes track state only to catch misuse, cond
+ * vars never block, and pthread_create fails with ENOSYS.
+ * --------------------------------------------------------------------- */
+
+#include <errno.h>   /* EBUSY / EDEADLK / ENOSYS */
+#include <stddef.h>  /* size_t */
+
+typedef int pthread_mutex_t;
+typedef int pthread_cond_t;
+typedef int pthread_t;
+typedef int pthread_once_t;
+typedef int pthread_attr_t;
+typedef int pthread_mutexattr_t;
+typedef int pthread_condattr_t;
+typedef int pthread_rwlockattr_t;
+typedef struct { int exclusive; } pthread_rwlock_t;
+
+#define PTHREAD_MUTEX_INITIALIZER 0
+#define PTHREAD_ONCE_INIT         0
+#define PTHREAD_RWLOCK_INITIALIZER   { 0 }
+#define PTHREAD_RWLOCK_PREFER_WRITER_NONRECURSIVE_NP  1  /* stub value */
+
+static __inline int pthread_mutex_init(pthread_mutex_t *m,
+                                        const pthread_mutexattr_t *attr) {
+    (void)attr; *m = 0; return 0;
+}
+static __inline int pthread_mutex_lock(pthread_mutex_t *m) {
+    if (*m) return EDEADLK;
+    *m = 1; return 0;
+}
+static __inline int pthread_mutex_trylock(pthread_mutex_t *m) {
+    if (*m) return EBUSY;
+    *m = 1; return 0;
+}
+static __inline int pthread_mutex_unlock(pthread_mutex_t *m) {
+    *m = 0; return 0;
+}
+static __inline int pthread_mutex_destroy(pthread_mutex_t *m) {
+    (void)m; return 0;
+}
+
+static __inline int pthread_attr_init(pthread_attr_t *attr) {
+    (void)attr; return 0;
+}
+static __inline int pthread_attr_destroy(pthread_attr_t *attr) {
+    (void)attr; return 0;
+}
+static __inline int pthread_attr_setstacksize(pthread_attr_t *attr,
+                                              size_t stacksize) {
+    (void)attr; (void)stacksize; return 0;
+}
+static __inline int pthread_attr_getstacksize(const pthread_attr_t *attr,
+                                              size_t *stacksize) {
+    (void)attr; if (stacksize) *stacksize = 0; return 0;
+}
+
+static __inline int pthread_cond_init(pthread_cond_t *c,
+                                       const pthread_condattr_t *attr) {
+    (void)c; (void)attr; return 0;
+}
+static __inline int pthread_cond_wait(pthread_cond_t *c, pthread_mutex_t *m) {
+    /* Single-threaded host: never block; the caller re-checks state. */
+    (void)c; (void)m; return 0;
+}
+static __inline int pthread_cond_timedwait(pthread_cond_t *c,
+                                            pthread_mutex_t *m,
+                                            const struct timespec *abstime) {
+    (void)c; (void)m; (void)abstime; return 0;
+}
+static __inline int pthread_cond_signal(pthread_cond_t *c) {
+    (void)c; return 0;
+}
+static __inline int pthread_cond_broadcast(pthread_cond_t *c) {
+    (void)c; return 0;
+}
+static __inline int pthread_cond_destroy(pthread_cond_t *c) {
+    (void)c; return 0;
+}
+
+static __inline int pthread_rwlock_init(pthread_rwlock_t *rw,
+                                         const pthread_rwlockattr_t *attr) {
+    (void)attr; rw->exclusive = 0; return 0;
+}
+static __inline int pthread_rwlock_rdlock(pthread_rwlock_t *rw) {
+    if (rw->exclusive) return EDEADLK;
+    return 0;
+}
+static __inline int pthread_rwlock_wrlock(pthread_rwlock_t *rw) {
+    if (rw->exclusive) return EDEADLK;
+    rw->exclusive = 1; return 0;
+}
+static __inline int pthread_rwlock_unlock(pthread_rwlock_t *rw) {
+    rw->exclusive = 0; return 0;
+}
+static __inline int pthread_rwlock_destroy(pthread_rwlock_t *rw) {
+    (void)rw; return 0;
+}
+
+static __inline int pthread_rwlockattr_init(pthread_rwlockattr_t *a) {
+    (void)a; return 0;
+}
+static __inline int pthread_rwlockattr_destroy(pthread_rwlockattr_t *a) {
+    (void)a; return 0;
+}
+static __inline int pthread_rwlockattr_setkind_np(pthread_rwlockattr_t *a,
+                                                   int pref) {
+    (void)a; (void)pref; return 0;
+}
+
+static __inline int pthread_once(pthread_once_t *once_ctrl,
+                                  void (*init_routine)(void)) {
+    /* States mirror the MSVC branch: 0=new, 1=running, 2=done. A second
+     * call cannot arrive mid-initialisation on a single-threaded host. */
+    if (*once_ctrl != 2) {
+        *once_ctrl = 1;
+        init_routine();
+        *once_ctrl = 2;
+    }
+    return 0;
+}
+
+static __inline int pthread_create(pthread_t *thread,
+                                    const void *attr,
+                                    void *(*start_routine)(void *),
+                                    void *arg) {
+    (void)attr; (void)start_routine; (void)arg;
+    if (thread) *thread = 0;
+    return ENOSYS;
+}
+static __inline int pthread_join(pthread_t thread, void **retval) {
+    (void)thread; (void)retval; return 0;
+}
+static __inline pthread_t pthread_self(void) {
+    return 0;
+}
+
+#endif /* __wasi__ */
 
 #if defined(_MSC_VER) && defined(_WIN32)
 /* -----------------------------------------------------------------------
