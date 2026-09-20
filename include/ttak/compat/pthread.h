@@ -11,32 +11,40 @@
  * top of the Windows synchronisation API (SRWLOCK, CONDITION_VARIABLE,
  * CRITICAL_SECTION, CreateThread / WaitForSingleObject, InitOnceExecuteOnce).
  *
- * On WASI (preview1), the single-threaded host has no pthread
- * implementation and sysroots often ship no <pthread.h> at all; a
- * self-contained single-threaded stub set is provided instead.
+ * On WASI (preview1), the single-threaded host has no usable pthread
+ * implementation. Sysroots that ship their own <pthread.h> (e.g.
+ * wasi-libc, whose pthread types are also pulled in by <sys/types.h>)
+ * are preferred; otherwise a self-contained single-threaded stub set
+ * is provided as a fallback.
  */
 
-#if (!defined(_MSC_VER) || !defined(_WIN32)) && !defined(__wasi__)
+#if !defined(_MSC_VER) || !defined(_WIN32)
 #  if defined(__has_include_next)
 #    if __has_include_next(<pthread.h>)
 #      include_next <pthread.h>
+#      define __TTAK_PTHREAD_SYSTEM 1
 #    endif
 #  else
 #    include_next <pthread.h>
+#    define __TTAK_PTHREAD_SYSTEM 1
 #  endif
 #endif
 
 #ifndef TTAK_PTHREAD_SHIM_H
 #define TTAK_PTHREAD_SHIM_H
 
-#if defined(__wasi__)
+#if defined(__wasi__) && !defined(__TTAK_PTHREAD_SYSTEM)
 /* -----------------------------------------------------------------------
- * WASI (preview1): single-threaded host with no pthread implementation.
- * wasi-libc sysroots commonly ship no <pthread.h> at all, and searching
- * host include directories leaks glibc headers, so this branch provides
- * self-contained stubs. Synchronisation primitives cannot contend on a
- * single-threaded host: mutexes track state only to catch misuse, cond
- * vars never block, and pthread_create fails with ENOSYS.
+ * WASI (preview1) fallback: the sysroot ships no <pthread.h>. Searching
+ * host include directories would leak glibc headers, so this branch
+ * provides self-contained stubs. Synchronisation primitives cannot
+ * contend on a single-threaded host: mutexes track state only to catch
+ * misuse, cond vars never block, and pthread_create fails with ENOSYS.
+ *
+ * Note: sysroots whose <sys/types.h> defines pthread types (musl-style
+ * bits/alltypes.h, as in wasi-libc) cannot use this fallback - the
+ * typedefs would collide. Such sysroots are expected to provide their
+ * own <pthread.h>, which is consumed via include_next above.
  * --------------------------------------------------------------------- */
 
 #include <errno.h>   /* EBUSY / EDEADLK / ENOSYS */
@@ -171,7 +179,7 @@ static __inline pthread_t pthread_self(void) {
     return 0;
 }
 
-#endif /* __wasi__ */
+#endif /* __wasi__ && !__TTAK_PTHREAD_SYSTEM */
 
 #if defined(_MSC_VER) && defined(_WIN32)
 /* -----------------------------------------------------------------------
