@@ -259,6 +259,7 @@ static inline void *ttak_mem_access(void *ptr, uint64_t now_tick) {
 
     /* Guard against use-after-free on pages that have been unmapped. */
     void *page_base = (void *)(((uintptr_t)header) & ~((uintptr_t)4095));
+    (void)page_base; /* WASI and other targets probe nothing */
 #if defined(__linux__)
     unsigned char vec = 0;
     if (mincore(page_base, 4096, &vec) != 0) return NULL;
