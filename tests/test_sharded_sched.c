@@ -262,6 +262,46 @@ void test_worker_shard_affinity(void) {
     ttak_thread_pool_destroy(pool);
 }
 
+/* -------------------------------------------------------------------------
+ * 8. Priority-0 tasks must never be dropped or starved, even when one lands
+ *    in heap slot 0 of the task queue.
+ * ---------------------------------------------------------------------- */
+static _Atomic int prio_zero_counter = 0;
+
+void *prio_zero_task(void *arg) {
+    (void)arg;
+    prio_zero_counter++;
+    return NULL;
+}
+
+void test_pool_priority_zero_no_starvation(void) {
+    uint64_t now = ttak_get_tick_count();
+    ttak_thread_pool_t *pool = ttak_thread_pool_create(4, 0, now);
+    ASSERT(pool != NULL);
+
+    prio_zero_counter = 0;
+    const int N = 64;
+    ttak_future_t *futures[64];
+
+    for (int i = 0; i < N; i++) {
+        futures[i] = ttak_thread_pool_submit_task(pool, prio_zero_task, NULL, 0, now);
+        ASSERT(futures[i] != NULL);
+    }
+
+    for (int i = 0; i < N; i++) {
+        ttak_future_get(futures[i]);
+    }
+
+    ASSERT_MSG(prio_zero_counter == N,
+               "only %d of %d priority-0 tasks completed", prio_zero_counter, N);
+
+    uint64_t elapsed = ttak_get_tick_count() - now;
+    ASSERT_MSG(elapsed < 10000, "priority-0 burst took %llu ms (expected < 10000)",
+               (unsigned long long)elapsed);
+
+    ttak_thread_pool_destroy(pool);
+}
+
 int main(void) {
     RUN_TEST(test_route_table_bounds);
     RUN_TEST(test_shard_mapping_deterministic);
@@ -270,6 +310,7 @@ int main(void) {
     RUN_TEST(test_sharded_scheduler_history);
     RUN_TEST(test_pool_sharded_routing);
     RUN_TEST(test_pool_sharded_routing_net_urgency);
+    RUN_TEST(test_pool_priority_zero_no_starvation);
     RUN_TEST(test_work_stealing);
     return 0;
 }
