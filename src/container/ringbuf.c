@@ -4,6 +4,8 @@
 #include <string.h>
 #include <stdlib.h>
 
+static bool ringbuf_is_empty_locked(const ttak_ringbuf_t *rb);
+
 /**
  * @brief Creates ring buffer.
  */
@@ -69,7 +71,7 @@ bool ttak_ringbuf_push(ttak_ringbuf_t *rb, const void *item) {
  */
 bool ttak_ringbuf_pop(ttak_ringbuf_t *rb, void *out_item) {
     ttak_rwlock_wrlock(&rb->lock);
-    if (ttak_ringbuf_is_empty(rb)) {
+    if (ringbuf_is_empty_locked(rb)) {
         ttak_rwlock_unlock(&rb->lock);
         return false;
     }
@@ -86,16 +88,30 @@ bool ttak_ringbuf_pop(ttak_ringbuf_t *rb, void *out_item) {
     return true;
 }
 
-bool ttak_ringbuf_is_empty(ttak_ringbuf_t *rb) {
+static bool ringbuf_is_empty_locked(const ttak_ringbuf_t *rb) {
     return (!rb->full && (rb->head == rb->tail));
 }
 
+bool ttak_ringbuf_is_empty(ttak_ringbuf_t *rb) {
+    ttak_rwlock_rdlock(&rb->lock);
+    bool empty = ringbuf_is_empty_locked(rb);
+    ttak_rwlock_unlock(&rb->lock);
+    return empty;
+}
+
 bool ttak_ringbuf_is_full(ttak_ringbuf_t *rb) {
-    return rb->full;
+    ttak_rwlock_rdlock(&rb->lock);
+    bool full = rb->full;
+    ttak_rwlock_unlock(&rb->lock);
+    return full;
 }
 
 size_t ttak_ringbuf_count(ttak_ringbuf_t *rb) {
-    if (rb->full) return rb->capacity;
-    if (rb->head >= rb->tail) return rb->head - rb->tail;
-    return rb->capacity + rb->head - rb->tail;
+    ttak_rwlock_rdlock(&rb->lock);
+    size_t count;
+    if (rb->full) count = rb->capacity;
+    else if (rb->head >= rb->tail) count = rb->head - rb->tail;
+    else count = rb->capacity + rb->head - rb->tail;
+    ttak_rwlock_unlock(&rb->lock);
+    return count;
 }
