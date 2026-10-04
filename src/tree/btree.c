@@ -26,9 +26,11 @@ static ttak_btree_node_t *create_node(int t, bool leaf, uint64_t now) {
     node->children = (struct ttak_btree_node **)ttak_mem_alloc_raw(sizeof(struct ttak_btree_node *) * max_children, __TTAK_UNSAFE_MEM_FOREVER__, now);
 
     if (!node->keys || !node->values || !node->children) {
-        // Cleanup if partial alloc failed (simplified: just return null, leaking partials in this simplified prototype)
-        // ideally we free what we alloc'd.
-        return NULL; 
+        if (node->keys) ttak_mem_free(node->keys);
+        if (node->values) ttak_mem_free(node->values);
+        if (node->children) ttak_mem_free(node->children);
+        ttak_mem_free(node);
+        return NULL;
     }
     return node;
 }
