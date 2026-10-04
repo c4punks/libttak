@@ -16,10 +16,14 @@ static void q_push(struct __internal_ttak_proc_priority_queue_t *q, ttak_task_t 
     if (!q) return;
     struct __internal_ttak_qnode_t *node = (struct __internal_ttak_qnode_t *)ttak_dangerous_alloc(sizeof(struct __internal_ttak_qnode_t));
     if (!node) {
+#ifdef TTAK_DEBUG_QUEUE
         fprintf(stderr, "[queue] push failed: node alloc failed\n");
+#endif
         return;
     }
+#ifdef TTAK_DEBUG_QUEUE
     fprintf(stderr, "[queue] push task=%p priority=%d shard=%p head=%p\n", (void*)task, priority, (void*)q, (void*)q->head);
+#endif
     node->task = task;
     node->priority = priority;
     node->next = NULL;
@@ -53,7 +57,9 @@ static ttak_task_t *q_pop(struct __internal_ttak_proc_priority_queue_t *q, uint6
     q->head = node->next;
     q->size--;
     ttak_dangerous_free(node);
+#ifdef TTAK_DEBUG_QUEUE
     fprintf(stderr, "[queue] pop task=%p shard=%p new_head=%p size=%zu\n", (void*)task, (void*)q, (void*)q->head, q->size);
+#endif
     return task;
 }
 

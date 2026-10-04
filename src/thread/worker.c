@@ -92,8 +92,10 @@ static ttak_task_t *worker_steal_task(ttak_thread_pool_t *pool, size_t skip_shar
 void *ttak_worker_routine(void *arg) {
     ttak_worker_t *self = (ttak_worker_t *)arg;
     ttak_thread_pool_t *pool = self->pool;
+#ifdef TTAK_DEBUG_WORKER
     fprintf(stderr, "[worker] start %p\n", (void*)self);
     fflush(stderr);
+#endif
     set_current_worker(self);
     ttak_epoch_register_thread();
     ttak_epoch_exit();
@@ -141,7 +143,9 @@ void *ttak_worker_routine(void *arg) {
         }
 
         if (task) {
+#ifdef TTAK_DEBUG_WORKER
             fprintf(stderr, "[worker] %p executing task %p\n", (void*)self, (void*)task);
+#endif
             volatile _Bool epoch_active = 0;
             if (tt_setjmp(self->wrapper->env, &self->wrapper->jmp_magic, &self->wrapper->jmp_tid) == 0) {
                 ttak_epoch_enter(); epoch_active = 1;
