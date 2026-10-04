@@ -248,19 +248,18 @@ void ttak_net_session_mgr_close(ttak_net_session_mgr_t *mgr,
     ttak_net_session_flush_retire(pending);
 }
 
-static void ttak_net_session_collect_pending(ttak_net_session_t *node,
-                                             uint64_t now,
-                                             ttak_net_session_t **pending) {
+static void ttak_net_session_collect_due(ttak_net_session_t *node,
+                                         uint64_t now,
+                                         ttak_net_session_t **due) {
     while (node) {
         if (!(node->state_flags & TTAK_NET_SESSION_ZOMBIE) &&
             (node->state_flags & TTAK_NET_SESSION_IMMORTAL) &&
             now >= node->next_sanity_ns) {
-            node->next_sanity_ns = now + TTAK_NET_SANITY_INTERVAL_NS;
-            node->sanity_next = *pending;
-            *pending = node;
+            node->sanity_next = *due;
+            *due = node;
         }
         if (node->first_child) {
-            ttak_net_session_collect_pending(node->first_child, now, pending);
+            ttak_net_session_collect_due(node->first_child, now, due);
         }
         node = node->next_sibling;
     }
@@ -268,10 +267,27 @@ static void ttak_net_session_collect_pending(ttak_net_session_t *node,
 
 void ttak_net_session_mgr_tick(ttak_net_session_mgr_t *mgr, uint64_t now) {
     if (!mgr) return;
-    ttak_rwlock_wrlock(&mgr->lock);
-    ttak_net_session_t *pending = NULL;
-    ttak_net_session_collect_pending(mgr->head, now, &pending);
+    ttak_rwlock_rdlock(&mgr->lock);
+    ttak_net_session_t *due = NULL;
+    ttak_net_session_collect_due(mgr->head, now, &due);
     ttak_rwlock_unlock(&mgr->lock);
+    if (!due) return;
+
+    ttak_net_session_t *pending = NULL;
+    ttak_rwlock_wrlock(&mgr->lock);
+    while (due) {
+        ttak_net_session_t *current = due;
+        due = due->sanity_next;
+        current->sanity_next = NULL;
+        if (current->state_flags & TTAK_NET_SESSION_ZOMBIE) {
+            continue;
+        }
+        current->next_sanity_ns = now + TTAK_NET_SANITY_INTERVAL_NS;
+        current->sanity_next = pending;
+        pending = current;
+    }
+    ttak_rwlock_unlock(&mgr->lock);
+    if (!pending) return;
 
     while (pending) {
         ttak_net_session_t *current = pending;
