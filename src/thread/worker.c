@@ -125,20 +125,26 @@ void *ttak_worker_routine(void *arg) {
             /* 1. Try preferred shard (fast path) */
             pthread_mutex_lock(&pref_shard->lock);
             task = pref_shard->queue.pop(&pref_shard->queue, now);
-            if (task) {
-                pthread_mutex_unlock(&pref_shard->lock);
-                break;
-            }
+            pthread_mutex_unlock(&pref_shard->lock);
+            if (task) break;
 
-            /* 2. Try stealing from other shards (throughput path) */
+            /* 2. Try stealing from other shards (throughput path).  The
+             *    preferred shard lock is intentionally NOT held here so
+             *    the shard stays available to its affine worker. */
             task = worker_steal_task(pool, pref, now);
-            if (task) {
+            if (task) break;
+
+            /* 3. Still idle?  Re-lock the preferred shard, re-check for
+             *    work under the lock (no lost wakeups), then wait. */
+            pthread_mutex_lock(&pref_shard->lock);
+            if (self->should_stop || pool->is_shutdown) {
                 pthread_mutex_unlock(&pref_shard->lock);
                 break;
             }
-
-            /* 3. Still idle? Wait on preferred shard's condition variable. */
-            pthread_cond_wait(&pref_shard->cond, &pref_shard->lock);
+            task = pref_shard->queue.pop(&pref_shard->queue, now);
+            if (!task) {
+                pthread_cond_wait(&pref_shard->cond, &pref_shard->lock);
+            }
             pthread_mutex_unlock(&pref_shard->lock);
         }
 
