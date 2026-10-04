@@ -100,8 +100,7 @@ typedef struct ttak_mem_header_t {
     uint64_t access_count;              /**< Atomic access audit counter */
     uint64_t pin_count;                 /**< Atomic reference count for pinning */
     size_t   size;                      /**< User-requested size in bytes */
-    pthread_mutex_t lock;               /**< Per-header synchronization lock */
-    uint8_t  freed;                     /**< True if the block has been deallocated */
+    _Atomic uint8_t freed;              /**< Atomic flag: true once the block is deallocated */
     uint8_t  is_const;                  /**< Immutability hint */
     uint8_t  is_volatile;               /**< Volatility hint */
     uint8_t  allow_direct_access;       /**< Safety bypass flag for direct pointer access */
@@ -116,6 +115,30 @@ typedef struct ttak_mem_header_t {
     size_t   mapped_size;               /**< Total OS-mapped bytes (header + payload + canary) */
     char     reserved[2];               /**< Explicit padding for header alignment */
 } ttak_mem_header_t;
+
+#if defined(__TINYC__) || defined(__STDC_NO_ATOMICS__)
+static inline uint8_t ttak_mem_freed_load(const ttak_mem_header_t *h) {
+    return *(volatile uint8_t *)&h->freed;
+}
+static inline void ttak_mem_freed_store(ttak_mem_header_t *h, uint8_t v) {
+    *(volatile uint8_t *)&h->freed = v;
+}
+static inline uint8_t ttak_mem_freed_exchange(ttak_mem_header_t *h, uint8_t v) {
+    uint8_t old = *(volatile uint8_t *)&h->freed;
+    *(volatile uint8_t *)&h->freed = v;
+    return old;
+}
+#else
+static inline uint8_t ttak_mem_freed_load(const ttak_mem_header_t *h) {
+    return atomic_load(&h->freed);
+}
+static inline void ttak_mem_freed_store(ttak_mem_header_t *h, uint8_t v) {
+    atomic_store(&h->freed, v);
+}
+static inline uint8_t ttak_mem_freed_exchange(ttak_mem_header_t *h, uint8_t v) {
+    return atomic_exchange(&h->freed, v);
+}
+#endif
 
 /**
  * @enum ttak_mem_flags_t
@@ -271,7 +294,7 @@ static inline void *ttak_mem_access(void *ptr, uint64_t now_tick) {
 #endif
 
     if (header->magic != TTAK_MAGIC_NUMBER) return NULL;
-    if (header->freed) return NULL;
+    if (ttak_mem_freed_load(header)) return NULL;
     if (header->expires_tick != __TTAK_UNSAFE_MEM_FOREVER__ && now_tick > header->expires_tick) return NULL;
     if (!header->allow_direct_access) return NULL;
 

@@ -185,15 +185,12 @@ static ttak_mem_header_t *region_alloc(ttak_region_allocator_t *alloc, size_t us
 
     ttak_mem_header_t *header = (ttak_mem_header_t *)((uint8_t *)blk + payload_offset());
     ttak_mem_stream_zero(header, aligned_total_alloc_size);
-    pthread_mutex_init(&header->lock, NULL);
     pthread_mutex_unlock(&alloc->lock);
     return header;
 }
 
 static void region_free(ttak_region_allocator_t *alloc, ttak_mem_header_t *header) {
     if (!header) return;
-
-    pthread_mutex_destroy(&header->lock);
 
     pthread_mutex_lock(&alloc->lock);
     ttak_region_block_t *blk = (ttak_region_block_t *)((uint8_t *)header - payload_offset());
@@ -216,7 +213,6 @@ ttak_mem_header_t* ttak_mem_vma_alloc_internal(size_t user_requested_size) {
     ttak_mem_header_t *header = (ttak_mem_header_t *)ttak_os_mem_alloc(total);
     if (header) {
         memset(header, 0, total);
-        pthread_mutex_init(&header->lock, NULL);
     }
     return header;
 #else
@@ -227,7 +223,6 @@ ttak_mem_header_t* ttak_mem_vma_alloc_internal(size_t user_requested_size) {
 void _vma_free_internal(ttak_mem_header_t* header) {
 #if TTAK_OS_MANAGED_MEMORY
     if (!header) return;
-    pthread_mutex_destroy(&header->lock);
     ttak_os_mem_free(header, header->mapped_size);
 #else
     region_free(&vma_allocator, header);
@@ -241,7 +236,6 @@ ttak_mem_header_t* ttak_mem_large_alloc_internal(size_t user_requested_size) {
     ttak_mem_header_t *header = (ttak_mem_header_t *)ttak_os_mem_alloc(total);
     if (header) {
         memset(header, 0, total);
-        pthread_mutex_init(&header->lock, NULL);
     }
     return header;
 #else
@@ -252,7 +246,6 @@ ttak_mem_header_t* ttak_mem_large_alloc_internal(size_t user_requested_size) {
 void _large_free_internal(ttak_mem_header_t* header) {
 #if TTAK_OS_MANAGED_MEMORY
     if (!header) return;
-    pthread_mutex_destroy(&header->lock);
     ttak_os_mem_free(header, header->mapped_size);
 #else
     region_free(&large_allocator, header);

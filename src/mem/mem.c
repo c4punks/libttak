@@ -461,7 +461,7 @@ void TTAK_HOT_PATH *ttak_mem_alloc_safe(size_t size, uint64_t lifetime_ticks, ui
     header->access_count = 0;
     header->pin_count = 0;
     header->size = size;
-    header->freed = false;
+    ttak_mem_freed_store(header, 0);
     header->is_const = is_const;
     header->is_volatile = is_volatile;
     header->allow_direct_access = allow_direct;
@@ -471,7 +471,6 @@ void TTAK_HOT_PATH *ttak_mem_alloc_safe(size_t size, uint64_t lifetime_ticks, ui
     header->is_root = is_root;
     header->canary_start = strict_check_enabled ? TTAK_CANARY_START_MAGIC : 0;
     header->canary_end = strict_check_enabled ? TTAK_CANARY_END_MAGIC : 0;
-    pthread_mutex_init(&header->lock, NULL);
     header->allocation_tier = allocated_tier;
 
     size_t actual_total_alloc_size;
@@ -536,10 +535,8 @@ void TTAK_HOT_PATH *ttak_mem_realloc_safe(void *ptr, size_t new_size, uint64_t l
     if (!ptr) return ttak_mem_alloc_safe(new_size, lifetime_ticks, now, false, false, true, is_root, flags);
 
     ttak_mem_header_t *old_header = GET_HEADER(ptr);
-    pthread_mutex_lock(&old_header->lock);
     bool is_const = old_header->is_const, is_volatile = old_header->is_volatile, allow_direct = old_header->allow_direct_access, old_strict = old_header->strict_check;
     size_t old_size = old_header->size;
-    pthread_mutex_unlock(&old_header->lock);
 
     ttak_mem_flags_t new_flags = flags;
     if (old_strict) new_flags |= TTAK_MEM_STRICT_CHECK; else new_flags &= ~TTAK_MEM_STRICT_CHECK;
@@ -586,10 +583,7 @@ void TTAK_HOT_PATH ttak_mem_free(void *ptr) {
     void *stable_ptr = ptr;
     ttak_mem_header_t *header = GET_HEADER(stable_ptr);
 
-    pthread_mutex_lock(&header->lock);
-    if (header->freed) { pthread_mutex_unlock(&header->lock); return; }
-    header->freed = true;
-    pthread_mutex_unlock(&header->lock);
+    if (ttak_mem_freed_exchange(header, 1)) return;
 
     V_HEADER(stable_ptr);
 
@@ -623,7 +617,6 @@ void TTAK_HOT_PATH ttak_mem_free(void *ptr) {
             if (ttak_embedded_ptr_in_pool(header)) {
                 ttak_mem_buddy_free(header);
             } else {
-                pthread_mutex_destroy(&header->lock);
                 ttak_embedded_os_free(header, header->mapped_size);
             }
 #else
@@ -634,7 +627,6 @@ void TTAK_HOT_PATH ttak_mem_free(void *ptr) {
             _large_free_internal(header);
             break;
         default:
-            pthread_mutex_destroy(&header->lock);
 #if EMBEDDED
             ttak_mem_buddy_free(header);
 #else
@@ -702,7 +694,7 @@ void *ttak_mem_access_bridge(void *ptr, uint64_t now_tick) {
 #endif
 
     if (header->magic != TTAK_MAGIC_NUMBER) return NULL;
-    if (header->freed) return NULL;
+    if (ttak_mem_freed_load(header)) return NULL;
     if (header->expires_tick != __TTAK_UNSAFE_MEM_FOREVER__ && now_tick > header->expires_tick) return NULL;
     if (!header->allow_direct_access) return NULL;
 
@@ -721,12 +713,10 @@ void ttak_mem_set_trace(int enable) {
                 /* Map values are mem-tree nodes; the header lives just
                  * before the user pointer key. */
                 ttak_mem_header_t *h = GET_HEADER((void *)map_handle->entries[i].key);
-                pthread_mutex_lock(&h->lock);
                 if (enable && !h->tracking_log) {
                     h->tracking_log = malloc(1024);
                     if (h->tracking_log) snprintf(h->tracking_log, 1024, "{\"event\":\"trace_enabled\",\"ts\":%" PRIu64 "}", ttak_get_tick_count());
                 } else if (!enable && h->tracking_log) { free(h->tracking_log); h->tracking_log = NULL; }
-                pthread_mutex_unlock(&h->lock);
             }
         }
     }
