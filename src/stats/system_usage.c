@@ -93,48 +93,62 @@ static double ttak_cpu_usage_delta(ttak_cpu_snapshot_t prev, ttak_cpu_snapshot_t
     return (double)(totald - idled) * 100.0 / (double)totald;
 }
 
-double ttak_get_cpu_usage_total(void) {
+/**
+ * @brief Parse /proc/stat once and atomically update the shared previous
+ * snapshot store, computing usage deltas against the previous snapshot
+ * under the same lock.
+ *
+ * Both total and per-core usage derive from a single parse and the same
+ * previous-snapshot baseline, so interleaving the two public functions no
+ * longer corrupts the delta baseline. Pass core < 0 to skip per-core.
+ */
+static _Bool ttak_cpu_snapshot_usage(int core,
+                                     double *total_usage,
+                                     double *core_usage) {
     ttak_cpu_snapshot_t now_total = {0};
     ttak_cpu_snapshot_t *now_cores = NULL;
     size_t now_core_count = 0;
     if (!ttak_read_proc_stat(&now_total, &now_cores, &now_core_count)) {
-        return -1.0;
+        return 0;
     }
 
     pthread_mutex_lock(&g_cpu_lock);
-    double usage = ttak_cpu_usage_delta(g_prev_total, now_total);
+    if (total_usage) {
+        *total_usage = ttak_cpu_usage_delta(g_prev_total, now_total);
+    }
+    if (core_usage) {
+        if ((size_t)core < now_core_count && (size_t)core < g_prev_core_count) {
+            *core_usage = ttak_cpu_usage_delta(g_prev_cores[core], now_cores[core]);
+        } else if ((size_t)core < now_core_count) {
+            *core_usage = 0.0;
+        } else {
+            *core_usage = -1.0;
+        }
+    }
     g_prev_total = now_total;
     g_prev_total.valid = 1;
     free(g_prev_cores);
     g_prev_cores = now_cores;
     g_prev_core_count = now_core_count;
     pthread_mutex_unlock(&g_cpu_lock);
+    return 1;
+}
+
+double ttak_get_cpu_usage_total(void) {
+    double usage = 0.0;
+    if (!ttak_cpu_snapshot_usage(-1, &usage, NULL)) {
+        return -1.0;
+    }
     return usage;
 }
 
 double ttak_get_cpu_usage_per_core(int core) {
     if (core < 0) return -1.0;
 
-    ttak_cpu_snapshot_t now_total = {0};
-    ttak_cpu_snapshot_t *now_cores = NULL;
-    size_t now_core_count = 0;
-    if (!ttak_read_proc_stat(&now_total, &now_cores, &now_core_count)) {
+    double usage = -1.0;
+    if (!ttak_cpu_snapshot_usage(core, NULL, &usage)) {
         return -1.0;
     }
-
-    pthread_mutex_lock(&g_cpu_lock);
-    double usage = -1.0;
-    if ((size_t)core < now_core_count && (size_t)core < g_prev_core_count) {
-        usage = ttak_cpu_usage_delta(g_prev_cores[core], now_cores[core]);
-    } else if ((size_t)core < now_core_count) {
-        usage = 0.0;
-    }
-    g_prev_total = now_total;
-    g_prev_total.valid = 1;
-    free(g_prev_cores);
-    g_prev_cores = now_cores;
-    g_prev_core_count = now_core_count;
-    pthread_mutex_unlock(&g_cpu_lock);
     return usage;
 }
 
