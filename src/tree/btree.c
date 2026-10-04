@@ -108,22 +108,28 @@ static void split_child(ttak_btree_t *tree, ttak_btree_node_t *x, int i, uint64_
  * @param now  Timestamp for recursion/allocations.
  */
 static void insert_non_full(ttak_btree_t *tree, ttak_btree_node_t *x, void *k, void *v, uint64_t now) {
-    int i = x->n - 1;
+    /* Binary search: i becomes the insert position, i.e. the first index
+     * where cmp(k, keys[i]) < 0; all keys from i onwards shift right. */
+    int i;
+    {
+        int lo = 0, hi = x->n;
+        while (lo < hi) {
+            int mid = lo + (hi - lo) / 2;
+            if (tree->cmp(k, x->keys[mid]) < 0) hi = mid;
+            else lo = mid + 1;
+        }
+        i = lo;
+    }
 
     if (x->leaf) {
-        while (i >= 0 && tree->cmp(k, x->keys[i]) < 0) {
-            x->keys[i + 1] = x->keys[i];
-            x->values[i + 1] = x->values[i];
-            i--;
+        for (int j = x->n - 1; j >= i; j--) {
+            x->keys[j + 1] = x->keys[j];
+            x->values[j + 1] = x->values[j];
         }
-        x->keys[i + 1] = k;
-        x->values[i + 1] = v;
+        x->keys[i] = k;
+        x->values[i] = v;
         x->n = x->n + 1;
     } else {
-        while (i >= 0 && tree->cmp(k, x->keys[i]) < 0) {
-            i--;
-        }
-        i++;
         if (x->children[i]->n == 2 * tree->t - 1) {
             split_child(tree, x, i, now);
             if (tree->cmp(k, x->keys[i]) > 0) {
@@ -177,10 +183,13 @@ static void *search_recursive(ttak_btree_t *tree, ttak_btree_node_t *x, const vo
     if (!x || !ttak_mem_access(x, now)) return NULL;
     
     int i = 0;
-    while (i < x->n && tree->cmp(k, x->keys[i]) > 0) {
-        i++;
+    int lo = 0, hi = x->n;
+    while (lo < hi) {
+        int mid = lo + (hi - lo) / 2;
+        if (tree->cmp(k, x->keys[mid]) > 0) lo = mid + 1;
+        else hi = mid;
     }
-    
+    i = lo;
     if (i < x->n && tree->cmp(k, x->keys[i]) == 0) {
         return x->values[i];
     }
