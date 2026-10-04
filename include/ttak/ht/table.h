@@ -24,6 +24,7 @@ typedef struct ttak_table {
     void     **values;  /**< Values array */
     size_t   capacity;
     size_t   size;
+    size_t   tombstones; /**< Slots marked DELETED; count toward the resize trigger. */
     uint64_t k0;
     uint64_t k1;
     

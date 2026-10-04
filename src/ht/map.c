@@ -48,6 +48,7 @@ tt_map_t *ttak_create_map(size_t init_cap, uint64_t now) {
 
     map->cap  = next_pow2(init_cap);
     map->size = 0;
+    map->tombstones = 0;
     map->seed = 0xa0761d6478bd642fULL;
     map->ctrls  = NULL;
     map->keys   = NULL;
@@ -63,17 +64,19 @@ tt_map_t *ttak_create_map(size_t init_cap, uint64_t now) {
     return map;
 }
 
-static void ttak_resize_map(tt_map_t *map, uint64_t now) {
+/* Rebuild the map into fresh arrays of @p new_cap slots. Only live entries
+ * survive, so tombstones are cleared. @p new_cap may equal the current
+ * capacity to rehash in place. */
+static void ttak_resize_map_to(tt_map_t *map, uint64_t now, size_t new_cap) {
     size_t old_cap = map->cap;
     uint8_t *old_ctrls = map->ctrls;
     uintptr_t *old_keys = map->keys;
     size_t *old_vals = map->values;
 
-    size_t new_cap = old_cap * 2;
     tt_map_t *new_m = ttak_create_map(new_cap, now);
     if (!new_m) return;
 
-    for (size_t i = 0; i < old_cap; i++) {
+    for (size_t i = 0; i < old_cap + MAX_PROBE; i++) {
         if (old_ctrls[i] == OCCUPIED) {
             ttak_insert_to_map(new_m, old_keys[i], old_vals[i], now);
         }
@@ -91,23 +94,37 @@ static void ttak_resize_map(tt_map_t *map, uint64_t now) {
 
 void ttak_insert_to_map(tt_map_t *map, uintptr_t key, size_t val, uint64_t now) {
     if (!ttak_mem_access(map, now)) return;
-    if (map->size * 10 >= map->cap * 7) ttak_resize_map(map, now);
+    /* Tombstones count toward the load factor: they lengthen probe chains
+     * just like live entries. If live entries alone stay under 70%, rehash
+     * at the same capacity instead of growing. */
+    if ((map->size + map->tombstones) * 10 >= map->cap * 7) {
+        size_t new_cap = (map->size * 10 >= map->cap * 7) ? map->cap * 2 : map->cap;
+        ttak_resize_map_to(map, now, new_cap);
+    }
 
     uint64_t h = gen_hash_wyhash(key, map->seed);
     size_t idx = h & (map->cap - 1);
+    size_t first_tomb = SIZE_MAX;
 
     // Linear probing with padding - fewer branches
-    while (map->ctrls[idx] == OCCUPIED) {
-        if (map->keys[idx] == key) {
+    while (map->ctrls[idx] != EMPTY) {
+        if (map->ctrls[idx] == DELETED) {
+            if (first_tomb == SIZE_MAX) first_tomb = idx;
+        } else if (map->keys[idx] == key) {
             map->values[idx] = val;
             return;
         }
         idx++;
-        // If we hit the padding limit, we must wrap. 
+        // If we hit the padding limit, we must wrap.
         // But with MAX_PROBE and 70% load, this is rare.
         if (idx >= map->cap + MAX_PROBE - 1) {
             idx = 0;
         }
+    }
+
+    if (first_tomb != SIZE_MAX) {
+        idx = first_tomb;
+        map->tombstones--;
     }
 
     map->ctrls[idx] = OCCUPIED;
@@ -141,6 +158,7 @@ void ttak_delete_from_map(tt_map_t *map, uintptr_t key, uint64_t now) {
         if (map->ctrls[idx] == OCCUPIED && map->keys[idx] == key) {
             map->ctrls[idx] = DELETED;
             map->size--;
+            map->tombstones++;
             return;
         }
         idx++;

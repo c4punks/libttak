@@ -29,9 +29,10 @@ typedef struct {
     uint8_t   *ctrls;  /**< Control bytes (OCCUPIED, EMPTY, DELETED) */
     uintptr_t *keys;   /**< Keys array */
     size_t    *values; /**< Values array */
-    size_t    cap;     /**< Capacity (must be power of two) */
-    size_t    size;    /**< Number of occupied slots */
-    uint64_t  seed;    /**< Seed for wyhash */
+    size_t    cap;       /**< Capacity (must be power of two) */
+    size_t    size;      /**< Number of live key/value pairs */
+    size_t    tombstones;/**< Slots marked DELETED; count toward the resize trigger */
+    uint64_t  seed;      /**< Seed for wyhash */
 #ifndef _MSC_VER
     alignas(ttak_max_align_t) char padding[0];
 #endif
