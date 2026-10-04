@@ -1,7 +1,44 @@
 #include <ttak/priority/internal/queue.h>
 #include <ttak/mem/mem.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
+#include <string.h>
+
+/**
+ * @brief Max-heap comparator on the priority score.
+ *
+ * Heap elements encode (priority, item slot) into the pointer value:
+ * the upper 32 bits hold the sign-preserved priority and the lower 32
+ * bits hold the index into q->items.  The comparator orders by priority
+ * so that the highest priority score sits at the heap root, matching
+ * the pop order of the former sorted list (higher priority value
+ * dequeued first).
+ */
+static int q_heap_cmp(const void *a, const void *b) {
+    int32_t pa = (int32_t)((uintptr_t)a >> 32);
+    int32_t pb = (int32_t)((uintptr_t)b >> 32);
+    return (pa > pb) - (pa < pb);
+}
+
+/**
+ * @brief Grow a buffer, replacing it via copy when out of capacity.
+ *
+ * @param ptr     Current buffer pointer.
+ * @param count   Current element count in use.
+ * @param cap     Current capacity (updated on success).
+ * @param elem    Element size.
+ * @return New buffer pointer, or NULL on allocation failure.
+ */
+static void *q_grow_buffer(void *ptr, size_t count, size_t *cap, size_t elem) {
+    size_t new_cap = (*cap == 0) ? 16 : (*cap * 2);
+    void *next = ttak_dangerous_alloc(new_cap * elem);
+    if (!next) return NULL;
+    if (ptr && count > 0) memcpy(next, ptr, count * elem);
+    ttak_dangerous_free(ptr);
+    *cap = new_cap;
+    return next;
+}
 
 /**
  * @brief Insert a task into the queue according to its priority.
@@ -14,30 +51,29 @@
 static void q_push(struct __internal_ttak_proc_priority_queue_t *q, ttak_task_t *task, int priority, uint64_t now) {
     (void)now;
     if (!q) return;
-    struct __internal_ttak_qnode_t *node = (struct __internal_ttak_qnode_t *)ttak_dangerous_alloc(sizeof(struct __internal_ttak_qnode_t));
-    if (!node) {
 #ifdef TTAK_DEBUG_QUEUE
-        fprintf(stderr, "[queue] push failed: node alloc failed\n");
+    fprintf(stderr, "[queue] push task=%p priority=%d shard=%p size=%zu\n", (void*)task, priority, (void*)q, q->size);
 #endif
-        return;
-    }
-#ifdef TTAK_DEBUG_QUEUE
-    fprintf(stderr, "[queue] push task=%p priority=%d shard=%p head=%p\n", (void*)task, priority, (void*)q, (void*)q->head);
-#endif
-    node->task = task;
-    node->priority = priority;
-    node->next = NULL;
-    if (!q->head || q->head->priority < priority) {
-        node->next = q->head;
-        q->head = node;
+    size_t slot;
+    if (q->free_count > 0) {
+        slot = q->free_slots[--q->free_count];
     } else {
-        struct __internal_ttak_qnode_t *current = q->head;
-        while (current->next && current->next->priority >= priority) {
-            current = current->next;
+        if (q->items_count == q->items_cap) {
+            void *grown = q_grow_buffer(q->items, q->items_count, &q->items_cap, sizeof(*q->items));
+            if (!grown) {
+#ifdef TTAK_DEBUG_QUEUE
+                fprintf(stderr, "[queue] push failed: item alloc failed\n");
+#endif
+                return;
+            }
+            q->items = (struct __internal_ttak_qnode_t *)grown;
         }
-        node->next = current->next;
-        current->next = node;
+        slot = q->items_count++;
     }
+    q->items[slot].task = task;
+    q->items[slot].priority = priority;
+    void *element = (void *)(((uintptr_t)(uint32_t)(int32_t)priority << 32) | (uintptr_t)(uint32_t)slot);
+    ttak_heap_tree_push(&q->heap, element, now);
     q->size++;
 }
 
@@ -50,15 +86,24 @@ static void q_push(struct __internal_ttak_proc_priority_queue_t *q, ttak_task_t 
  */
 static ttak_task_t *q_pop(struct __internal_ttak_proc_priority_queue_t *q, uint64_t now) {
     (void)now;
-    if (!q || !q->head) return NULL;
-    struct __internal_ttak_qnode_t *node = q->head;
-    
-    ttak_task_t *task = node->task;
-    q->head = node->next;
+    if (!q || q->size == 0) return NULL;
+    void *element = ttak_heap_tree_pop(&q->heap, now);
+    if (!element) return NULL;
+    size_t slot = (size_t)(uint32_t)(uintptr_t)element;
+    ttak_task_t *task = q->items[slot].task;
+    if (q->free_count == q->free_cap) {
+        void *grown = q_grow_buffer(q->free_slots, q->free_count, &q->free_cap, sizeof(*q->free_slots));
+        if (!grown) {
+            /* Out of memory: leak the slot rather than corrupting the heap. */
+            q->size--;
+            return task;
+        }
+        q->free_slots = (size_t *)grown;
+    }
+    q->free_slots[q->free_count++] = slot;
     q->size--;
-    ttak_dangerous_free(node);
 #ifdef TTAK_DEBUG_QUEUE
-    fprintf(stderr, "[queue] pop task=%p shard=%p new_head=%p size=%zu\n", (void*)task, (void*)q, (void*)q->head, q->size);
+    fprintf(stderr, "[queue] pop task=%p shard=%p size=%zu\n", (void*)task, (void*)q, q->size);
 #endif
     return task;
 }
@@ -74,7 +119,7 @@ static ttak_task_t *q_pop(struct __internal_ttak_proc_priority_queue_t *q, uint6
  */
 static ttak_task_t *q_pop_blocking(struct __internal_ttak_proc_priority_queue_t *q, pthread_mutex_t *mutex, pthread_cond_t *cond, uint64_t now) {
     if (!q) return NULL;
-    while (q->head == NULL) {
+    while (q->size == 0) {
         pthread_cond_wait(cond, mutex);
     }
     return q_pop(q, now);
@@ -107,7 +152,13 @@ static size_t q_get_cap(struct __internal_ttak_proc_priority_queue_t *q) {
  */
 void ttak_priority_queue_init(struct __internal_ttak_proc_priority_queue_t *q) {
     if (!q) return;
-    q->head = NULL;
+    ttak_heap_tree_init(&q->heap, 16, q_heap_cmp);
+    q->items = NULL;
+    q->items_count = 0;
+    q->items_cap = 0;
+    q->free_slots = NULL;
+    q->free_count = 0;
+    q->free_cap = 0;
     q->size = 0;
     q->cap = 0;
     q->push = q_push;

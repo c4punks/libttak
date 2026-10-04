@@ -10,6 +10,7 @@
 #define __TTAK_INTERNAL_QUEUE_H__
 
 #include <ttak/async/task.h>
+#include <ttak/priority/heap.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <ttak/compat/pthread.h>
@@ -17,11 +18,16 @@
 struct __internal_ttak_qnode_t {
     ttak_task_t *task;
     int priority;
-    struct __internal_ttak_qnode_t *next;
 };
 
 struct __internal_ttak_proc_priority_queue_t {
-    struct __internal_ttak_qnode_t *head;
+    ttak_heap_tree_t heap;
+    struct __internal_ttak_qnode_t *items;
+    size_t items_count;
+    size_t items_cap;
+    size_t *free_slots;
+    size_t free_count;
+    size_t free_cap;
     size_t size;
     size_t cap;
 
