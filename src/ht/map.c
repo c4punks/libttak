@@ -24,7 +24,9 @@ static void ttak_map_arrays_destroy(tt_map_t *map) {
     if (map->values) { ttak_mem_free(map->values); map->values = NULL; }
 }
 
-/* Internal constructor: allocate and zero-initialise all three arrays.
+/* Internal constructor: allocate the three arrays and zero only the
+ * control bytes. keys/values of non-OCCUPIED slots are never read, so
+ * zero-initialising them is unnecessary work.
  * Returns 0 on success, -1 on any allocation failure (arrays freed on error). */
 static int ttak_map_arrays_alloc(tt_map_t *map, size_t padded_cap, uint64_t now) {
     map->ctrls  = ttak_mem_alloc_raw(padded_cap * sizeof(uint8_t),   __TTAK_UNSAFE_MEM_FOREVER__, now);
@@ -37,8 +39,6 @@ static int ttak_map_arrays_alloc(tt_map_t *map, size_t padded_cap, uint64_t now)
     }
 
     memset(map->ctrls,  0, padded_cap * sizeof(uint8_t));
-    memset(map->keys,   0, padded_cap * sizeof(uintptr_t));
-    memset(map->values, 0, padded_cap * sizeof(size_t));
     return 0;
 }
 
