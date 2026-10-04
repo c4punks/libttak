@@ -15,13 +15,23 @@ typedef struct ttak_table_entry {
 } ttak_table_entry_t;
 
 /**
- * @brief Generic SipHash Table (Refactored to Open Addressing SoA).
+ * @brief Fused key/value slot for the open-addressing table (AoS layout).
+ *
+ * Keeping the key next to its value (and its length) means a successful
+ * lookup touches one entry cache line instead of separate keys/values lines.
+ */
+typedef struct ttak_table_entry_slot {
+    void   *key;     /**< Slot key (only meaningful when ctrl is OCCUPIED). */
+    void   *value;   /**< Slot value associated with @c key. */
+    size_t key_len;  /**< Length of the @c key. */
+} ttak_table_entry_slot_t;
+
+/**
+ * @brief Generic Table (open addressing, control bytes + fused entries).
  */
 typedef struct ttak_table {
-    uint8_t  *ctrls;    /**< Control bytes */
-    void     **keys;    /**< Keys array */
-    size_t   *key_lens; /**< Key lengths array */
-    void     **values;  /**< Values array */
+    uint8_t  *ctrls;   /**< Control bytes */
+    ttak_table_entry_slot_t *entries; /**< Fused key/value/key_len slots */
     size_t   capacity;
     size_t   size;
     size_t   tombstones; /**< Slots marked DELETED; count toward the resize trigger. */

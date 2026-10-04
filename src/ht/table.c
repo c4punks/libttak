@@ -40,12 +40,10 @@ void ttak_table_init(ttak_table_t *table, size_t capacity,
     table->val_free = val_free;
 
     size_t padded_cap = cap + MAX_PROBE;
-    ttak_mem_flags_t flags = (padded_cap * (sizeof(uint8_t) + sizeof(void*) * 3) >= 2 * 1024 * 1024) ? TTAK_MEM_HUGE_PAGES : TTAK_MEM_DEFAULT;
-    
-    table->ctrls = ttak_mem_alloc_safe(padded_cap * sizeof(uint8_t), __TTAK_UNSAFE_MEM_FOREVER__, 0, false, false, true, true, flags);
-    table->keys = ttak_mem_alloc_safe(padded_cap * sizeof(void*), __TTAK_UNSAFE_MEM_FOREVER__, 0, false, false, true, true, flags);
-    table->key_lens = ttak_mem_alloc_safe(padded_cap * sizeof(size_t), __TTAK_UNSAFE_MEM_FOREVER__, 0, false, false, true, true, flags);
-    table->values = ttak_mem_alloc_safe(padded_cap * sizeof(void*), __TTAK_UNSAFE_MEM_FOREVER__, 0, false, false, true, true, flags);
+    ttak_mem_flags_t flags = (padded_cap * (sizeof(uint8_t) + sizeof(ttak_table_entry_slot_t)) >= 2 * 1024 * 1024) ? TTAK_MEM_HUGE_PAGES : TTAK_MEM_DEFAULT;
+
+    table->ctrls   = ttak_mem_alloc_safe(padded_cap * sizeof(uint8_t),                  __TTAK_UNSAFE_MEM_FOREVER__, 0, false, false, true, true, flags);
+    table->entries = ttak_mem_alloc_safe(padded_cap * sizeof(ttak_table_entry_slot_t),  __TTAK_UNSAFE_MEM_FOREVER__, 0, false, false, true, true, flags);
 
     if (table->ctrls) memset(table->ctrls, 0, padded_cap * sizeof(uint8_t));
 }
@@ -60,9 +58,7 @@ void ttak_table_init(ttak_table_t *table, size_t capacity,
 static void ttak_table_rehash(ttak_table_t *table, uint64_t now, size_t new_cap) {
     size_t old_cap = table->capacity;
     uint8_t *old_ctrls = table->ctrls;
-    void **old_keys = table->keys;
-    size_t *old_key_lens = table->key_lens;
-    void **old_vals = table->values;
+    ttak_table_entry_slot_t *old_entries = table->entries;
 
     ttak_table_t new_t;
     ttak_table_init(&new_t, new_cap, table->hash_func, table->key_cmp, NULL, NULL);
@@ -71,19 +67,15 @@ static void ttak_table_rehash(ttak_table_t *table, uint64_t now, size_t new_cap)
 
     for (size_t i = 0; i < old_cap + MAX_PROBE; i++) {
         if (old_ctrls[i] == OCCUPIED) {
-            ttak_table_put(&new_t, old_keys[i], old_key_lens[i], old_vals[i], now);
+            ttak_table_put(&new_t, old_entries[i].key, old_entries[i].key_len, old_entries[i].value, now);
         }
     }
 
     ttak_mem_free(old_ctrls);
-    ttak_mem_free(old_keys);
-    ttak_mem_free(old_key_lens);
-    ttak_mem_free(old_vals);
+    ttak_mem_free(old_entries);
 
     table->ctrls = new_t.ctrls;
-    table->keys = new_t.keys;
-    table->key_lens = new_t.key_lens;
-    table->values = new_t.values;
+    table->entries = new_t.entries;
     table->capacity = new_t.capacity;
     table->tombstones = 0;
 }
@@ -105,10 +97,10 @@ void ttak_table_put(ttak_table_t *table, void *key, size_t key_len, void *value,
     while (table->ctrls[idx] != EMPTY) {
         if (table->ctrls[idx] == DELETED) {
             if (first_tomb == SIZE_MAX) first_tomb = idx;
-        } else if (table->key_cmp(table->keys[idx], key) == 0) {
-            if (table->val_free && table->values[idx]) table->val_free(table->values[idx]);
-            table->values[idx] = value;
-            table->key_lens[idx] = key_len;
+        } else if (table->key_cmp(table->entries[idx].key, key) == 0) {
+            if (table->val_free && table->entries[idx].value) table->val_free(table->entries[idx].value);
+            table->entries[idx].value = value;
+            table->entries[idx].key_len = key_len;
             return;
         }
         idx++;
@@ -121,9 +113,9 @@ void ttak_table_put(ttak_table_t *table, void *key, size_t key_len, void *value,
     }
 
     table->ctrls[idx] = OCCUPIED;
-    table->keys[idx] = key;
-    table->key_lens[idx] = key_len;
-    table->values[idx] = value;
+    table->entries[idx].key = key;
+    table->entries[idx].value = value;
+    table->entries[idx].key_len = key_len;
     table->size++;
 }
 
@@ -135,8 +127,8 @@ void *ttak_table_get(ttak_table_t *table, const void *key, size_t key_len, uint6
     size_t idx = hash & (table->capacity - 1);
 
     while (table->ctrls[idx] != EMPTY) {
-        if (table->ctrls[idx] == OCCUPIED && table->key_cmp(table->keys[idx], key) == 0) {
-            return table->values[idx];
+        if (table->ctrls[idx] == OCCUPIED && table->key_cmp(table->entries[idx].key, key) == 0) {
+            return table->entries[idx].value;
         }
         idx++;
         if (idx >= table->capacity + MAX_PROBE - 1) idx = 0;
@@ -152,9 +144,9 @@ bool ttak_table_remove(ttak_table_t *table, const void *key, size_t key_len, uin
     size_t idx = hash & (table->capacity - 1);
 
     while (table->ctrls[idx] != EMPTY) {
-        if (table->ctrls[idx] == OCCUPIED && table->key_cmp(table->keys[idx], key) == 0) {
-            if (table->key_free && table->keys[idx]) table->key_free(table->keys[idx]);
-            if (table->val_free && table->values[idx]) table->val_free(table->values[idx]);
+        if (table->ctrls[idx] == OCCUPIED && table->key_cmp(table->entries[idx].key, key) == 0) {
+            if (table->key_free && table->entries[idx].key) table->key_free(table->entries[idx].key);
+            if (table->val_free && table->entries[idx].value) table->val_free(table->entries[idx].value);
             table->ctrls[idx] = DELETED;
             table->size--;
             table->tombstones++;
@@ -172,14 +164,12 @@ void ttak_table_destroy(ttak_table_t *table, uint64_t now) {
 
     for (size_t i = 0; i < table->capacity + MAX_PROBE; i++) {
         if (table->ctrls[i] == OCCUPIED) {
-            if (table->key_free && table->keys[i]) table->key_free(table->keys[i]);
-            if (table->val_free && table->values[i]) table->val_free(table->values[i]);
+            if (table->key_free && table->entries[i].key) table->key_free(table->entries[i].key);
+            if (table->val_free && table->entries[i].value) table->val_free(table->entries[i].value);
         }
     }
     ttak_mem_free(table->ctrls);
-    ttak_mem_free(table->keys);
-    ttak_mem_free(table->key_lens);
-    ttak_mem_free(table->values);
+    ttak_mem_free(table->entries);
     table->size = 0;
     table->tombstones = 0;
 }

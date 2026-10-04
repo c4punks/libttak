@@ -17,23 +17,21 @@ static size_t next_pow2(size_t n) {
     return n + 1;
 }
 
-/* Internal destructor: release all three backing arrays regardless of NULL state. */
+/* Internal destructor: release both backing arrays regardless of NULL state. */
 static void ttak_map_arrays_destroy(tt_map_t *map) {
-    if (map->ctrls)  { ttak_mem_free(map->ctrls);  map->ctrls  = NULL; }
-    if (map->keys)   { ttak_mem_free(map->keys);   map->keys   = NULL; }
-    if (map->values) { ttak_mem_free(map->values); map->values = NULL; }
+    if (map->ctrls)   { ttak_mem_free(map->ctrls);   map->ctrls   = NULL; }
+    if (map->entries) { ttak_mem_free(map->entries); map->entries = NULL; }
 }
 
-/* Internal constructor: allocate the three arrays and zero only the
- * control bytes. keys/values of non-OCCUPIED slots are never read, so
+/* Internal constructor: allocate the two arrays and zero only the
+ * control bytes. Entries of non-OCCUPIED slots are never read, so
  * zero-initialising them is unnecessary work.
  * Returns 0 on success, -1 on any allocation failure (arrays freed on error). */
 static int ttak_map_arrays_alloc(tt_map_t *map, size_t padded_cap, uint64_t now) {
-    map->ctrls  = ttak_mem_alloc_raw(padded_cap * sizeof(uint8_t),   __TTAK_UNSAFE_MEM_FOREVER__, now);
-    map->keys   = ttak_mem_alloc_raw(padded_cap * sizeof(uintptr_t), __TTAK_UNSAFE_MEM_FOREVER__, now);
-    map->values = ttak_mem_alloc_raw(padded_cap * sizeof(size_t),    __TTAK_UNSAFE_MEM_FOREVER__, now);
+    map->ctrls   = ttak_mem_alloc_raw(padded_cap * sizeof(uint8_t),          __TTAK_UNSAFE_MEM_FOREVER__, now);
+    map->entries = ttak_mem_alloc_raw(padded_cap * sizeof(ttak_map_entry_t), __TTAK_UNSAFE_MEM_FOREVER__, now);
 
-    if (map->ctrls == NULL || map->keys == NULL || map->values == NULL) {
+    if (map->ctrls == NULL || map->entries == NULL) {
         ttak_map_arrays_destroy(map);
         return -1;
     }
@@ -50,9 +48,8 @@ tt_map_t *ttak_create_map(size_t init_cap, uint64_t now) {
     map->size = 0;
     map->tombstones = 0;
     map->seed = 0xa0761d6478bd642fULL;
-    map->ctrls  = NULL;
-    map->keys   = NULL;
-    map->values = NULL;
+    map->ctrls   = NULL;
+    map->entries = NULL;
 
     // Allocate with padding to allow branchless linear probing
     size_t padded_cap = map->cap + MAX_PROBE;
@@ -70,21 +67,19 @@ tt_map_t *ttak_create_map(size_t init_cap, uint64_t now) {
 static void ttak_resize_map_to(tt_map_t *map, uint64_t now, size_t new_cap) {
     size_t old_cap = map->cap;
     uint8_t *old_ctrls = map->ctrls;
-    uintptr_t *old_keys = map->keys;
-    size_t *old_vals = map->values;
+    ttak_map_entry_t *old_entries = map->entries;
 
     tt_map_t *new_m = ttak_create_map(new_cap, now);
     if (!new_m) return;
 
     for (size_t i = 0; i < old_cap + MAX_PROBE; i++) {
         if (old_ctrls[i] == OCCUPIED) {
-            ttak_insert_to_map(new_m, old_keys[i], old_vals[i], now);
+            ttak_insert_to_map(new_m, old_entries[i].key, old_entries[i].value, now);
         }
     }
 
     ttak_mem_free(old_ctrls);
-    ttak_mem_free(old_keys);
-    ttak_mem_free(old_vals);
+    ttak_mem_free(old_entries);
 
     uint64_t s = map->seed;
     *map = *new_m;
@@ -110,8 +105,8 @@ void ttak_insert_to_map(tt_map_t *map, uintptr_t key, size_t val, uint64_t now) 
     while (map->ctrls[idx] != EMPTY) {
         if (map->ctrls[idx] == DELETED) {
             if (first_tomb == SIZE_MAX) first_tomb = idx;
-        } else if (map->keys[idx] == key) {
-            map->values[idx] = val;
+        } else if (map->entries[idx].key == key) {
+            map->entries[idx].value = val;
             return;
         }
         idx++;
@@ -128,8 +123,8 @@ void ttak_insert_to_map(tt_map_t *map, uintptr_t key, size_t val, uint64_t now) 
     }
 
     map->ctrls[idx] = OCCUPIED;
-    map->keys[idx] = key;
-    map->values[idx] = val;
+    map->entries[idx].key = key;
+    map->entries[idx].value = val;
     map->size++;
 }
 
@@ -139,8 +134,8 @@ _Bool ttak_map_get_key(tt_map_t *map, uintptr_t key, size_t *out, uint64_t now) 
     size_t idx = h & (map->cap - 1);
 
     while (map->ctrls[idx] != EMPTY) {
-        if (map->ctrls[idx] == OCCUPIED && map->keys[idx] == key) {
-            if (out) *out = map->values[idx];
+        if (map->ctrls[idx] == OCCUPIED && map->entries[idx].key == key) {
+            if (out) *out = map->entries[idx].value;
             return 1;
         }
         idx++;
@@ -155,7 +150,7 @@ void ttak_delete_from_map(tt_map_t *map, uintptr_t key, uint64_t now) {
     size_t idx = h & (map->cap - 1);
 
     while (map->ctrls[idx] != EMPTY) {
-        if (map->ctrls[idx] == OCCUPIED && map->keys[idx] == key) {
+        if (map->ctrls[idx] == OCCUPIED && map->entries[idx].key == key) {
             map->ctrls[idx] = DELETED;
             map->size--;
             map->tombstones++;

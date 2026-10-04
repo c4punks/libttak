@@ -23,12 +23,22 @@
 #define OCCUPIED 0x0C
 
 /**
- * @brief Map structure using Structure of Arrays (SoA) for cache efficiency.
+ * @brief Fused key/value slot for the open-addressing map (AoS layout).
+ *
+ * Storing the key next to its value halves the cache misses per successful
+ * lookup compared to separate keys/values arrays.
  */
 typedef struct {
-    uint8_t   *ctrls;  /**< Control bytes (OCCUPIED, EMPTY, DELETED) */
-    uintptr_t *keys;   /**< Keys array */
-    size_t    *values; /**< Values array */
+    uintptr_t key;   /**< Slot key (only meaningful when ctrl is OCCUPIED). */
+    size_t    value; /**< Slot value associated with @c key. */
+} ttak_map_entry_t;
+
+/**
+ * @brief Map structure using control bytes plus a fused entries array.
+ */
+typedef struct {
+    uint8_t          *ctrls;   /**< Control bytes (OCCUPIED, EMPTY, DELETED) */
+    ttak_map_entry_t *entries; /**< Fused key/value slots */
     size_t    cap;       /**< Capacity (must be power of two) */
     size_t    size;      /**< Number of live key/value pairs */
     size_t    tombstones;/**< Slots marked DELETED; count toward the resize trigger */

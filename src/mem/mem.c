@@ -720,7 +720,7 @@ void ttak_mem_set_trace(int enable) {
             if (map_handle->ctrls[i] == OCCUPIED) {
                 /* Map values are mem-tree nodes; the header lives just
                  * before the user pointer key. */
-                ttak_mem_header_t *h = GET_HEADER((void *)map_handle->keys[i]);
+                ttak_mem_header_t *h = GET_HEADER((void *)map_handle->entries[i].key);
                 pthread_mutex_lock(&h->lock);
                 if (enable && !h->tracking_log) {
                     h->tracking_log = malloc(1024);
@@ -763,9 +763,9 @@ void TTAK_COLD_PATH **tt_inspect_dirty_pointers(uint64_t now, size_t *count_out)
         if (map_handle->ctrls[i] == OCCUPIED) {
             /* Map values are mem-tree nodes; the header lives just
              * before the user pointer key. */
-            ttak_mem_header_t *h = GET_HEADER((void*)map_handle->keys[i]);
+            ttak_mem_header_t *h = GET_HEADER((void*)map_handle->entries[i].key);
             if ((h->expires_tick != (uint64_t)-1 && now > h->expires_tick) || ttak_atomic_read64(&h->access_count) > 1000000)
-                dirty[found++] = (void*)map_handle->keys[i];
+                dirty[found++] = (void*)map_handle->entries[i].key;
         }
     }
     pthread_mutex_unlock(&global_map_lock); *count_out = found; return dirty;
