@@ -72,7 +72,10 @@ static void q_push(struct __internal_ttak_proc_priority_queue_t *q, ttak_task_t 
     }
     q->items[slot].task = task;
     q->items[slot].priority = priority;
-    void *element = (void *)(((uintptr_t)(uint32_t)(int32_t)priority << 32) | (uintptr_t)(uint32_t)slot);
+    /* Slot + 1 keeps the encoded element non-NULL even for priority 0 at
+     * slot 0; the heap uses a NULL return to signal emptiness, so a NULL
+     * payload would be dropped and desync q->size from the heap. */
+    void *element = (void *)(((uintptr_t)(uint32_t)(int32_t)priority << 32) | (uintptr_t)(uint32_t)(slot + 1));
     ttak_heap_tree_push(&q->heap, element, now);
     q->size++;
 }
@@ -87,9 +90,10 @@ static void q_push(struct __internal_ttak_proc_priority_queue_t *q, ttak_task_t 
 static ttak_task_t *q_pop(struct __internal_ttak_proc_priority_queue_t *q, uint64_t now) {
     (void)now;
     if (!q || q->size == 0) return NULL;
+    /* Emptiness is determined by q->size above; the popped element is a
+     * (priority, slot+1) encoding and is never NULL for a stored entry. */
     void *element = ttak_heap_tree_pop(&q->heap, now);
-    if (!element) return NULL;
-    size_t slot = (size_t)(uint32_t)(uintptr_t)element;
+    size_t slot = (size_t)(uint32_t)(uintptr_t)element - 1;
     ttak_task_t *task = q->items[slot].task;
     if (q->free_count == q->free_cap) {
         void *grown = q_grow_buffer(q->free_slots, q->free_count, &q->free_cap, sizeof(*q->free_slots));
