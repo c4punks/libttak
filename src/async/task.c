@@ -5,7 +5,6 @@
 
 #include <ttak/async/task.h>
 #include <ttak/mem/mem.h>
-#include <ttak/ht/hash.h>
 #include <stddef.h>
 
 #include <ttak/async/promise.h>
@@ -41,16 +40,11 @@ ttak_task_t *ttak_task_create(ttak_task_func_t func, void *arg, ttak_promise_t *
         task->arg = arg;
         task->promise = promise;
         
-        // Use SipHash-2-4 with arbitrary keys for task fingerprinting
-        uint64_t k0 = 0x0706050403020100ULL;
-        uint64_t k1 = 0x0F0E0D0C0B0A0908ULL;
-        // Combine func and arg into a pseudo-key or hash them separately and combine?
-        // Since the hash function takes a uintptr_t key, let's mix them first or just hash one heavily.
-        // Better: Hash the pointer to the function, and XOR with hash of arg?
-        // Or just XOR the pointers and hash the result?
-        // Let's do: Hash(func ^ arg). Simple and consistent.
+        // Use a Fibonacci multiply-shift mix: the hash only needs to spread
+        // (func, arg) across scheduling shards, so a full SipHash-2-4 round
+        // trip is overkill here.
         uintptr_t combined = (uintptr_t)func ^ (uintptr_t)arg;
-        task->task_hash = gen_hash_sip24(combined, k0, k1);
+        task->task_hash = combined * 0x9E3779B97F4A7C15ULL;
         
         task->start_ts = 0;
         task->base_priority = 0;
