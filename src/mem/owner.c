@@ -75,8 +75,20 @@ bool ttak_owner_register_resource(ttak_owner_t *owner, const char *name, void *d
 
     ttak_rwlock_wrlock(&owner->lock);
     uintptr_t key = _hash_str(name);
-    
-    ttak_insert_to_map(owner->resources, key, (size_t)data, ttak_get_tick_count());
+    uint64_t now = ttak_get_tick_count();
+
+    /* Each registration also stores a reverse entry keyed by the pointer
+     * whose value is the resource key, so ttak_mem_unuse can find and remove
+     * the binding with a direct keyed lookup instead of scanning the map. */
+    size_t old_val = 0;
+    if (ttak_map_get_key(owner->resources, key, &old_val, now) && (void *)old_val != data)
+        ttak_delete_from_map(owner->resources, (uintptr_t)old_val, now);
+    size_t old_key = 0;
+    if (ttak_map_get_key(owner->resources, (uintptr_t)data, &old_key, now))
+        ttak_delete_from_map(owner->resources, (uintptr_t)old_key, now);
+
+    ttak_insert_to_map(owner->resources, key, (size_t)data, now);
+    ttak_insert_to_map(owner->resources, (uintptr_t)data, (size_t)key, now);
     
     if (ttak_mem_is_trace_enabled()) {
         fprintf(stderr, "[MEM_TRACK] {\"event\":\"register\",\"ptr\":\"%p\",\"owner\":\"%p\",\"name\":\"%s\",\"ts\":%" PRIu64 "}\n", 
@@ -99,10 +111,16 @@ bool ttak_owner_transfer_resource(ttak_owner_t *from, ttak_owner_t *to, const ch
         return false;
     }
     ttak_delete_from_map(from->resources, key, 0);
+    /* Move the reverse (pointer-keyed) entry along with the resource. */
+    ttak_delete_from_map(from->resources, (uintptr_t)data_val, 0);
     ttak_rwlock_unlock(&from->lock);
 
     ttak_rwlock_wrlock(&to->lock);
+    size_t stale_key = 0;
+    if (ttak_map_get_key(to->resources, (uintptr_t)data_val, &stale_key, ttak_get_tick_count()))
+        ttak_delete_from_map(to->resources, (uintptr_t)stale_key, ttak_get_tick_count());
     ttak_insert_to_map(to->resources, key, data_val, ttak_get_tick_count());
+    ttak_insert_to_map(to->resources, (uintptr_t)data_val, (size_t)key, ttak_get_tick_count());
     
     if (ttak_mem_is_trace_enabled()) {
         fprintf(stderr, "[MEM_TRACK] {\"event\":\"transfer\",\"ptr\":\"%p\",\"from\":\"%p\",\"to\":\"%p\",\"name\":\"%s\",\"ts\":%" PRIu64 "}\n", 

@@ -506,8 +506,10 @@ void TTAK_HOT_PATH *ttak_mem_alloc_safe(size_t size, uint64_t lifetime_ticks, ui
              * instead of hitting the NULL fallback path. */
             t_reentrancy_guard = false;
             pthread_mutex_lock(&global_map_lock); in_mem_op = true;
-            ttak_insert_to_map(map_handle, (uintptr_t)user_ptr, (size_t)header, now);
-            ttak_mem_tree_add(&global_mem_tree, user_ptr, size, header->expires_tick, is_root);
+            /* The map value carries the mem-tree node so free/unuse can
+             * reach it in O(1) instead of walking the tree's node list. */
+            ttak_mem_node_t *node = ttak_mem_tree_add(&global_mem_tree, user_ptr, size, header->expires_tick, is_root);
+            ttak_insert_to_map(map_handle, (uintptr_t)user_ptr, (size_t)node, now);
             in_mem_op = false; pthread_mutex_unlock(&global_map_lock);
         }
     }
@@ -601,9 +603,13 @@ void TTAK_HOT_PATH ttak_mem_free(void *ptr) {
 
     if (header->is_root && (header->allocation_tier == TTAK_ALLOC_TIER_GENERAL || header->allocation_tier == TTAK_ALLOC_TIER_BUDDY)) {
         pthread_mutex_lock(&global_map_lock); in_mem_op = 1;
-        ttak_delete_from_map((tt_map_t*)global_ptr_map, (uintptr_t)stable_ptr, 0);
-        ttak_mem_node_t *node = ttak_mem_tree_find_node(&global_mem_tree, stable_ptr);
+        /* The ptr map value is the mem-tree node: O(1) lookup, no tree walk. */
+        size_t node_val = 0;
+        ttak_mem_node_t *node = NULL;
+        if (ttak_map_get_key((tt_map_t*)global_ptr_map, (uintptr_t)stable_ptr, &node_val, 0))
+            node = (ttak_mem_node_t *)node_val;
         if (node) ttak_mem_tree_remove(&global_mem_tree, node);
+        ttak_delete_from_map((tt_map_t*)global_ptr_map, (uintptr_t)stable_ptr, 0);
         in_mem_op = 0; pthread_mutex_unlock(&global_map_lock);
     }
 
@@ -651,15 +657,16 @@ void ttak_mem_unuse(void *ptr, ttak_owner_t *owner) {
     ttak_mem_header_t *header = GET_HEADER(stable_ptr);
     V_HEADER(stable_ptr);
 
-    /* Remove the pointer from the owner's resource map when an owner is given. */
+    /* Remove the pointer from the owner's resource map when an owner is given.
+     * Registration inserts a reverse entry keyed by the pointer whose value is
+     * the resource key, so this is a direct keyed lookup instead of a scan. */
     if (owner != TTAK_NO_OWNER && owner != NULL && owner->resources) {
         ttak_rwlock_wrlock(&owner->lock);
         ttak_map_t *res = (ttak_map_t *)owner->resources;
-        for (size_t i = 0; i < res->cap; ++i) {
-            if (res->ctrls[i] == OCCUPIED && (void *)res->values[i] == stable_ptr) {
-                ttak_delete_from_map(res, res->keys[i], ttak_get_tick_count());
-                break;
-            }
+        size_t res_key = 0;
+        if (ttak_map_get_key(res, (uintptr_t)stable_ptr, &res_key, ttak_get_tick_count())) {
+            ttak_delete_from_map(res, (uintptr_t)res_key, ttak_get_tick_count());
+            ttak_delete_from_map(res, (uintptr_t)stable_ptr, ttak_get_tick_count());
         }
         ttak_rwlock_unlock(&owner->lock);
     }
@@ -668,7 +675,11 @@ void ttak_mem_unuse(void *ptr, ttak_owner_t *owner) {
     if (header->is_root && (header->allocation_tier == TTAK_ALLOC_TIER_GENERAL ||
                             header->allocation_tier == TTAK_ALLOC_TIER_BUDDY)) {
         pthread_mutex_lock(&global_map_lock); in_mem_op = 1;
-        ttak_mem_node_t *node = ttak_mem_tree_find_node(&global_mem_tree, stable_ptr);
+        /* The ptr map value is the mem-tree node: O(1) lookup, no tree walk. */
+        size_t node_val = 0;
+        ttak_mem_node_t *node = NULL;
+        if (ttak_map_get_key((tt_map_t*)global_ptr_map, (uintptr_t)stable_ptr, &node_val, 0))
+            node = (ttak_mem_node_t *)node_val;
         if (node) ttak_mem_node_release(node);
         in_mem_op = 0; pthread_mutex_unlock(&global_map_lock);
     }
@@ -707,7 +718,9 @@ void ttak_mem_set_trace(int enable) {
     if (map_handle) {
         for (size_t i = 0; i < map_handle->cap; i++) {
             if (map_handle->ctrls[i] == OCCUPIED) {
-                ttak_mem_header_t *h = (ttak_mem_header_t *)map_handle->values[i];
+                /* Map values are mem-tree nodes; the header lives just
+                 * before the user pointer key. */
+                ttak_mem_header_t *h = GET_HEADER((void *)map_handle->keys[i]);
                 pthread_mutex_lock(&h->lock);
                 if (enable && !h->tracking_log) {
                     h->tracking_log = malloc(1024);
@@ -748,7 +761,9 @@ void TTAK_COLD_PATH **tt_inspect_dirty_pointers(uint64_t now, size_t *count_out)
     size_t found = 0;
     for (size_t i = 0; i < map_handle->cap; i++) {
         if (map_handle->ctrls[i] == OCCUPIED) {
-            ttak_mem_header_t *h = (ttak_mem_header_t *)map_handle->values[i];
+            /* Map values are mem-tree nodes; the header lives just
+             * before the user pointer key. */
+            ttak_mem_header_t *h = GET_HEADER((void*)map_handle->keys[i]);
             if ((h->expires_tick != (uint64_t)-1 && now > h->expires_tick) || ttak_atomic_read64(&h->access_count) > 1000000)
                 dirty[found++] = (void*)map_handle->keys[i];
         }
