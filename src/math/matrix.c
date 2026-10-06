@@ -567,3 +567,123 @@ _Bool ttak_matrix_set_ols_magic_square_4x4(tt_shared_matrix_t *m, tt_owner_t *ow
     m->base.release(&m->base);
     return true;
 }
+
+_Bool ttak_matrix_lu_decompose(tt_shared_matrix_t *l, tt_shared_matrix_t *u, tt_shared_matrix_t *p, tt_shared_matrix_t *m, tt_owner_t *owner, uint64_t now) {
+    if (!l || !u || !m || !owner) return false;
+    ttak_shared_result_t rl, ru, rp, rm;
+    ttak_matrix_t *mat_l = (ttak_matrix_t *)l->base.access(&l->base, owner, &rl);
+    ttak_matrix_t *mat_u = (ttak_matrix_t *)u->base.access(&u->base, owner, &ru);
+    ttak_matrix_t *mat_p = p ? (ttak_matrix_t *)p->base.access(&p->base, owner, &rp) : NULL;
+    ttak_matrix_t *mat_m = (ttak_matrix_t *)m->base.access(&m->base, owner, &rm);
+
+    if (!mat_l || !mat_u || !mat_m || mat_m->rows != mat_m->cols || mat_m->rows > 4) {
+        if (mat_l) l->base.release(&l->base);
+        if (mat_u) u->base.release(&u->base);
+        if (mat_p) p->base.release(&p->base);
+        if (mat_m) m->base.release(&m->base);
+        return false;
+    }
+
+    uint8_t n = mat_m->rows;
+    mat_l->rows = n; mat_l->cols = n;
+    mat_u->rows = n; mat_u->cols = n;
+    if (mat_p) { mat_p->rows = n; mat_p->cols = n; }
+
+    ttak_bigreal_t a[4][4];
+    uint8_t perm[4];
+    for (uint8_t i = 0; i < n; i++) {
+        perm[i] = i;
+        for (uint8_t j = 0; j < n; j++) {
+            ttak_bigreal_init(&a[i][j], now);
+            ttak_bigreal_copy(&a[i][j], &mat_m->elements[i * n + j], now);
+        }
+    }
+
+    ttak_bigreal_t zero, factor, prod, tmp;
+    ttak_bigreal_init(&zero, now);
+    ttak_bigreal_init_u64(&zero, 0, now);
+    ttak_bigreal_init(&factor, now);
+    ttak_bigreal_init(&prod, now);
+    ttak_bigreal_init(&tmp, now);
+
+    _Bool ok = true;
+    for (uint8_t i = 0; i < n; i++) {
+        // Partial pivoting: find non-zero pivot in column i
+        int pivot = -1;
+        for (uint8_t r = i; r < n; r++) {
+            if (ttak_bigreal_cmp(&a[r][i], &zero, now) != 0) {
+                pivot = r;
+                break;
+            }
+        }
+        if (pivot == -1) {
+            ok = false;
+            goto cleanup_lu;
+        }
+
+        if (pivot != (int)i) {
+            uint8_t tp = perm[i];
+            perm[i] = perm[pivot];
+            perm[pivot] = tp;
+            for (uint8_t c = 0; c < n; c++) {
+                ttak_bigreal_copy(&tmp, &a[i][c], now);
+                ttak_bigreal_copy(&a[i][c], &a[pivot][c], now);
+                ttak_bigreal_copy(&a[pivot][c], &tmp, now);
+            }
+        }
+
+        for (uint8_t r = i + 1; r < n; r++) {
+            if (ttak_bigreal_cmp(&a[r][i], &zero, now) == 0) continue;
+            if (!ttak_bigreal_div(&factor, &a[r][i], &a[i][i], now)) {
+                ok = false;
+                goto cleanup_lu;
+            }
+            ttak_bigreal_copy(&a[r][i], &factor, now); // store multiplier in lower part
+            for (uint8_t c = i + 1; c < n; c++) {
+                ttak_bigreal_mul(&prod, &factor, &a[i][c], now);
+                ttak_bigreal_sub(&a[r][c], &a[r][c], &prod, now);
+            }
+        }
+    }
+
+    // Populate L and U matrices
+    for (uint8_t i = 0; i < n; i++) {
+        for (uint8_t j = 0; j < n; j++) {
+            if (i > j) {
+                ttak_bigreal_copy(&mat_l->elements[i * n + j], &a[i][j], now);
+                ttak_bigreal_init_u64(&mat_u->elements[i * n + j], 0, now);
+            } else if (i == j) {
+                ttak_bigreal_init_u64(&mat_l->elements[i * n + j], 1, now);
+                ttak_bigreal_copy(&mat_u->elements[i * n + j], &a[i][j], now);
+            } else {
+                ttak_bigreal_init_u64(&mat_l->elements[i * n + j], 0, now);
+                ttak_bigreal_copy(&mat_u->elements[i * n + j], &a[i][j], now);
+            }
+        }
+    }
+
+    if (mat_p) {
+        for (uint8_t i = 0; i < n; i++) {
+            for (uint8_t j = 0; j < n; j++) {
+                ttak_bigreal_init_u64(&mat_p->elements[i * n + j], (perm[i] == j) ? 1 : 0, now);
+            }
+        }
+    }
+
+cleanup_lu:
+    ttak_bigreal_free(&zero, now);
+    ttak_bigreal_free(&factor, now);
+    ttak_bigreal_free(&prod, now);
+    ttak_bigreal_free(&tmp, now);
+    for (uint8_t i = 0; i < n; i++) {
+        for (uint8_t j = 0; j < n; j++) {
+            ttak_bigreal_free(&a[i][j], now);
+        }
+    }
+
+    l->base.release(&l->base);
+    u->base.release(&u->base);
+    if (p) p->base.release(&p->base);
+    m->base.release(&m->base);
+    return ok;
+}

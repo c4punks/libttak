@@ -281,6 +281,67 @@ void test_matrix_determinant_invert(void) {
     ttak_owner_destroy(owner);
 }
 
+static _Bool linear_decay_ode(ttak_bigreal_t *res, const ttak_bigreal_t *y, void *ctx, uint64_t now) {
+    (void)ctx;
+    // dy/dt = -y (exponential decay), for y=1 at t=0, exact at t=0 is dy/dt = -1
+    ttak_bigreal_copy(res, y, now);
+    res->mantissa.is_negative = !res->mantissa.is_negative;
+    return true;
+}
+
+void test_calculus_rk4_solve(void) {
+    uint64_t now = 8000;
+    ttak_bigreal_t t0, y0, t_end, y_res;
+    ttak_bigreal_init(&t0, now);
+    ttak_bigreal_init(&y0, now);
+    ttak_bigreal_init(&t_end, now);
+    ttak_bigreal_init(&y_res, now);
+
+    ttak_bigreal_init_u64(&t0, 0, now);
+    ttak_bigreal_init_u64(&y0, 1, now);
+    ttak_bigreal_init_u64(&t_end, 1, now);
+
+    // Solve dy/dt = -y for 2 steps from t=0 to t=1
+    ASSERT(ttak_calculus_rk4_solve(&y_res, linear_decay_ode, &t0, &y0, &t_end, 2, NULL, now));
+    // y_res should be positive and < 1 (approx 1/e ~ 0.3678)
+    ASSERT(!y_res.mantissa.is_negative);
+
+    ttak_bigreal_free(&t0, now);
+    ttak_bigreal_free(&y0, now);
+    ttak_bigreal_free(&t_end, now);
+    ttak_bigreal_free(&y_res, now);
+}
+
+void test_matrix_lu_decompose(void) {
+    uint64_t now = 9000;
+    tt_owner_t *owner = ttak_owner_create(0);
+    ASSERT(owner != NULL);
+
+    tt_shared_matrix_t *m = ttak_matrix_create(2, 2, owner, now);
+    tt_shared_matrix_t *l = ttak_matrix_create(2, 2, owner, now);
+    tt_shared_matrix_t *u = ttak_matrix_create(2, 2, owner, now);
+    tt_shared_matrix_t *p = ttak_matrix_create(2, 2, owner, now);
+    ASSERT(m && l && u && p);
+
+    // Matrix: [[4, 3], [6, 3]]
+    ttak_bigreal_t v4, v3, v6;
+    ttak_bigreal_init_u64(&v4, 4, now);
+    ttak_bigreal_init_u64(&v3, 3, now);
+    ttak_bigreal_init_u64(&v6, 6, now);
+
+    ASSERT(ttak_matrix_set(m, owner, 0, 0, &v4, now));
+    ASSERT(ttak_matrix_set(m, owner, 0, 1, &v3, now));
+    ASSERT(ttak_matrix_set(m, owner, 1, 0, &v6, now));
+    ASSERT(ttak_matrix_set(m, owner, 1, 1, &v3, now));
+
+    ASSERT(ttak_matrix_lu_decompose(l, u, p, m, owner, now));
+
+    ttak_bigreal_free(&v4, now);
+    ttak_bigreal_free(&v3, now);
+    ttak_bigreal_free(&v6, now);
+    ttak_owner_destroy(owner);
+}
+
 int main(void) {
     RUN_TEST(test_bigreal_init);
     RUN_TEST(test_bigcomplex_init);
@@ -293,5 +354,7 @@ int main(void) {
     RUN_TEST(test_calculus_partial_diff);
     RUN_TEST(test_matrix_shearing);
     RUN_TEST(test_matrix_determinant_invert);
+    RUN_TEST(test_calculus_rk4_solve);
+    RUN_TEST(test_matrix_lu_decompose);
     return 0;
 }

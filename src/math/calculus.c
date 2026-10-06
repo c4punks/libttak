@@ -213,7 +213,7 @@ _Bool ttak_calculus_rk4_step(ttak_bigreal_t *y_next, ttak_math_func_t f, const t
 
     _Bool success = false;
     ttak_bigreal_t k1, k2, k3, k4;
-    ttak_bigreal_t tmp_t, tmp_y, h_half, h_sixth;
+    ttak_bigreal_t tmp_t, tmp_y, h_half, factor_2, six;
     
     ttak_bigreal_init(&k1, now);
     ttak_bigreal_init(&k2, now);
@@ -222,12 +222,14 @@ _Bool ttak_calculus_rk4_step(ttak_bigreal_t *y_next, ttak_math_func_t f, const t
     ttak_bigreal_init(&tmp_t, now);
     ttak_bigreal_init(&tmp_y, now);
     ttak_bigreal_init(&h_half, now);
-    ttak_bigreal_init(&h_sixth, now);
+    ttak_bigreal_init(&factor_2, now);
+    ttak_bigreal_init(&six, now);
 
-    ttak_bigreal_init_u64(&tmp_t, 2, now);
-    ttak_bigreal_div(&h_half, h, &tmp_t, now);
-    ttak_bigreal_init_u64(&tmp_t, 6, now);
-    ttak_bigreal_div(&h_sixth, h, &tmp_t, now);
+    ttak_bigreal_init_u64(&factor_2, 2, now);
+    ttak_bigreal_init_u64(&six, 6, now);
+
+    // h_half = h / 2
+    if (!ttak_bigreal_div(&h_half, h, &factor_2, now)) goto cleanup;
 
     // k1 = f(t, y)
     if (!f(&k1, y, ctx, now)) goto cleanup;
@@ -249,12 +251,11 @@ _Bool ttak_calculus_rk4_step(ttak_bigreal_t *y_next, ttak_math_func_t f, const t
     ttak_bigreal_add(&tmp_y, y, &tmp_y, now);
     if (!f(&k4, &tmp_y, ctx, now)) goto cleanup;
 
-    // y_next = y + h/6 * (k1 + 2*k2 + 2*k3 + k4)
-    ttak_bigreal_t sum_k, factor_2;
+    // delta = h * (k1 + 2*k2 + 2*k3 + k4) / 6
+    ttak_bigreal_t sum_k, delta;
     ttak_bigreal_init(&sum_k, now);
-    ttak_bigreal_init_u64(&factor_2, 2, now);
+    ttak_bigreal_init(&delta, now);
 
-    /* Weighted stage accumulation: k1 + 2*k2 + 2*k3 + k4 */
     ttak_bigreal_copy(&sum_k, &k1, now);
     
     ttak_bigreal_mul(&tmp_y, &factor_2, &k2, now);
@@ -265,11 +266,12 @@ _Bool ttak_calculus_rk4_step(ttak_bigreal_t *y_next, ttak_math_func_t f, const t
     
     ttak_bigreal_add(&sum_k, &sum_k, &k4, now);
 
-    ttak_bigreal_mul(&tmp_y, &h_sixth, &sum_k, now);
-    ttak_bigreal_add(y_next, y, &tmp_y, now);
+    ttak_bigreal_mul(&delta, h, &sum_k, now);
+    ttak_bigreal_div(&delta, &delta, &six, now);
+    ttak_bigreal_add(y_next, y, &delta, now);
 
     ttak_bigreal_free(&sum_k, now);
-    ttak_bigreal_free(&factor_2, now);
+    ttak_bigreal_free(&delta, now);
 
     success = true;
 cleanup:
@@ -280,6 +282,56 @@ cleanup:
     ttak_bigreal_free(&tmp_t, now);
     ttak_bigreal_free(&tmp_y, now);
     ttak_bigreal_free(&h_half, now);
-    ttak_bigreal_free(&h_sixth, now);
+    ttak_bigreal_free(&factor_2, now);
+    ttak_bigreal_free(&six, now);
     return success;
+}
+
+_Bool ttak_calculus_rk4_solve(ttak_bigreal_t *y_res, ttak_math_func_t f, const ttak_bigreal_t *t0, const ttak_bigreal_t *y0, const ttak_bigreal_t *t_end, uint32_t steps, void *ctx, uint64_t now) {
+    if (!y_res || !f || !t0 || !y0 || !t_end || steps == 0) return false;
+
+    ttak_bigreal_t total_span, n_steps, h, cur_t, cur_y, next_y;
+    ttak_bigreal_init(&total_span, now);
+    ttak_bigreal_init(&n_steps, now);
+    ttak_bigreal_init(&h, now);
+    ttak_bigreal_init(&cur_t, now);
+    ttak_bigreal_init(&cur_y, now);
+    ttak_bigreal_init(&next_y, now);
+
+    ttak_bigreal_sub(&total_span, t_end, t0, now);
+    ttak_bigreal_init_u64(&n_steps, (uint64_t)steps, now);
+    if (!ttak_bigreal_div(&h, &total_span, &n_steps, now)) {
+        ttak_bigreal_free(&total_span, now);
+        ttak_bigreal_free(&n_steps, now);
+        ttak_bigreal_free(&h, now);
+        ttak_bigreal_free(&cur_t, now);
+        ttak_bigreal_free(&cur_y, now);
+        ttak_bigreal_free(&next_y, now);
+        return false;
+    }
+
+    ttak_bigreal_copy(&cur_t, t0, now);
+    ttak_bigreal_copy(&cur_y, y0, now);
+
+    _Bool ok = true;
+    for (uint32_t i = 0; i < steps; ++i) {
+        if (!ttak_calculus_rk4_step(&next_y, f, &cur_t, &cur_y, &h, ctx, now)) {
+            ok = false;
+            break;
+        }
+        ttak_bigreal_copy(&cur_y, &next_y, now);
+        ttak_bigreal_add(&cur_t, &cur_t, &h, now);
+    }
+
+    if (ok) {
+        ttak_bigreal_copy(y_res, &cur_y, now);
+    }
+
+    ttak_bigreal_free(&total_span, now);
+    ttak_bigreal_free(&n_steps, now);
+    ttak_bigreal_free(&h, now);
+    ttak_bigreal_free(&cur_t, now);
+    ttak_bigreal_free(&cur_y, now);
+    ttak_bigreal_free(&next_y, now);
+    return ok;
 }

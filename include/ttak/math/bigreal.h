@@ -23,6 +23,11 @@ void ttak_bigreal_free(ttak_bigreal_t *br, uint64_t now);
 _Bool ttak_bigreal_copy(ttak_bigreal_t *dst, const ttak_bigreal_t *src, uint64_t now);
 
 /**
+ * @brief Normalizes a bigreal by trimming trailing decimal zeros from mantissa.
+ */
+void ttak_bigreal_normalize(ttak_bigreal_t *br, uint64_t now);
+
+/**
  * @brief Aligns the exponents of two bigreals to the smaller one.
  */
 _Bool ttak_bigreal_align(ttak_bigreal_t *a, ttak_bigreal_t *b, uint64_t now);

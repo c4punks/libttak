@@ -64,4 +64,19 @@ _Bool ttak_calculus_integrate(ttak_bigreal_t *res, ttak_math_func_t f, const tta
  */
 _Bool ttak_calculus_rk4_step(ttak_bigreal_t *y_next, ttak_math_func_t f, const ttak_bigreal_t *t, const ttak_bigreal_t *y, const ttak_bigreal_t *h, void *ctx, uint64_t now);
 
+/**
+ * @brief Numerically integrates dy/dt = f(t, y) from t0 to t_end using RK4 across n steps.
+ *
+ * @param y_res Destination for the final state y(t_end).
+ * @param f Derivative function.
+ * @param t0 Initial time.
+ * @param y0 Initial state.
+ * @param t_end Target end time.
+ * @param steps Number of uniform RK4 steps to take.
+ * @param ctx User context.
+ * @param now Timestamp.
+ * @return true on success.
+ */
+_Bool ttak_calculus_rk4_solve(ttak_bigreal_t *y_res, ttak_math_func_t f, const ttak_bigreal_t *t0, const ttak_bigreal_t *y0, const ttak_bigreal_t *t_end, uint32_t steps, void *ctx, uint64_t now);
+
 #endif // TTAK_MATH_CALCULUS_H

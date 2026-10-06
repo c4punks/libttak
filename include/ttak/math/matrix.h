@@ -67,6 +67,19 @@ _Bool ttak_matrix_determinant(ttak_bigreal_t *det, tt_shared_matrix_t *m, tt_own
 _Bool ttak_matrix_invert(tt_shared_matrix_t *inv, tt_shared_matrix_t *m, tt_owner_t *owner, uint64_t now);
 
 /**
+ * @brief Computes LU decomposition of square matrix A = P * L * U (up to 4x4) with partial pivoting.
+ *
+ * @param l Lower triangular matrix output (unit diagonal).
+ * @param u Upper triangular matrix output.
+ * @param p Permutation matrix output (optional, pass NULL if not needed).
+ * @param m Source matrix.
+ * @param owner Calling owner.
+ * @param now Timestamp.
+ * @return true on success, false if singular or non-square.
+ */
+_Bool ttak_matrix_lu_decompose(tt_shared_matrix_t *l, tt_shared_matrix_t *u, tt_shared_matrix_t *p, tt_shared_matrix_t *m, tt_owner_t *owner, uint64_t now);
+
+/**
  * @brief Initializes the matrix as a 4x4 Orthogonal Latin Square with magic sums.
  *
  * Packs two mutually orthogonal Latin squares (upper and lower 2-bit fields)

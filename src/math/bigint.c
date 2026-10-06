@@ -332,11 +332,22 @@ bool ttak_bigint_is_zero(const ttak_bigint_t *bi) {
  */
 _Bool ttak_bigint_add(ttak_bigint_t *dst, const ttak_bigint_t *lhs, const ttak_bigint_t *rhs, uint64_t now) {
     if (lhs->is_negative != rhs->is_negative) {
-        // Subtraction case
-        if (lhs->is_negative) { // (-a) + b == b - a
-            return ttak_bigint_sub(dst, rhs, lhs, now);
-        } else { // a + (-b) == a - b
-            return ttak_bigint_sub(dst, lhs, rhs, now);
+        // Subtraction case: create temporary/view or handle with magnitude
+        ttak_bigint_t temp;
+        if (lhs->is_negative) { // (-a) + b == b - a (where a > 0, b > 0)
+            ttak_bigint_init(&temp, now);
+            ttak_bigint_copy(&temp, lhs, now);
+            temp.is_negative = false;
+            _Bool ok = ttak_bigint_sub(dst, rhs, &temp, now);
+            ttak_bigint_free(&temp, now);
+            return ok;
+        } else { // a + (-b) == a - b (where a > 0, b > 0)
+            ttak_bigint_init(&temp, now);
+            ttak_bigint_copy(&temp, rhs, now);
+            temp.is_negative = false;
+            _Bool ok = ttak_bigint_sub(dst, lhs, &temp, now);
+            ttak_bigint_free(&temp, now);
+            return ok;
         }
     }
 
@@ -386,43 +397,77 @@ _Bool ttak_bigint_add(ttak_bigint_t *dst, const ttak_bigint_t *lhs, const ttak_b
  */
 _Bool ttak_bigint_sub(ttak_bigint_t *dst, const ttak_bigint_t *lhs, const ttak_bigint_t *rhs, uint64_t now) {
     if (lhs->is_negative != rhs->is_negative) {
-        // Addition case
+        // Addition case: (-a) - b == -(a + b), a - (-b) == a + b (where a, b > 0)
+        ttak_bigint_t temp;
         if (lhs->is_negative) { // (-a) - b == -(a + b)
-            _Bool ok = ttak_bigint_add(dst, lhs, rhs, now);
+            ttak_bigint_init(&temp, now);
+            ttak_bigint_copy(&temp, lhs, now);
+            temp.is_negative = false;
+            _Bool ok = ttak_bigint_add(dst, &temp, rhs, now);
             if (ok) dst->is_negative = true;
+            ttak_bigint_free(&temp, now);
             return ok;
         } else { // a - (-b) == a + b
-            return ttak_bigint_add(dst, lhs, rhs, now);
+            ttak_bigint_init(&temp, now);
+            ttak_bigint_copy(&temp, rhs, now);
+            temp.is_negative = false;
+            _Bool ok = ttak_bigint_add(dst, lhs, &temp, now);
+            ttak_bigint_free(&temp, now);
+            return ok;
         }
     }
 
     // Same signs: a - b or (-a) - (-b) == b - a
     const ttak_bigint_t *a = lhs, *b = rhs;
-    if (lhs->is_negative) { // Switch for (-a) - (-b)
+    if (lhs->is_negative) { // (-a) - (-b) == b - a
         a = rhs; b = lhs;
     }
 
-    int cmp = ttak_bigint_cmp(a, b);
-    if (cmp == 0) {
+    // Compare magnitudes
+    size_t a_used = a->used;
+    const limb_t *a_limbs = get_const_limbs(a);
+    while (a_used > 0 && a_limbs[a_used - 1] == 0) a_used--;
+
+    size_t b_used = b->used;
+    const limb_t *b_limbs = get_const_limbs(b);
+    while (b_used > 0 && b_limbs[b_used - 1] == 0) b_used--;
+
+    int mag_cmp = 0;
+    if (a_used != b_used) {
+        mag_cmp = (a_used > b_used) ? 1 : -1;
+    } else {
+        for (size_t i = a_used; i > 0; --i) {
+            if (a_limbs[i - 1] != b_limbs[i - 1]) {
+                mag_cmp = (a_limbs[i - 1] > b_limbs[i - 1]) ? 1 : -1;
+                break;
+            }
+        }
+    }
+
+    if (mag_cmp == 0) {
         return ttak_bigint_set_u64(dst, 0, now);
     }
 
-    bool result_is_negative = (cmp < 0);
-    if (result_is_negative) {
-        const ttak_bigint_t *tmp = a; a = b; b = tmp;
+    bool result_is_negative = false;
+    const ttak_bigint_t *larger = a;
+    const ttak_bigint_t *smaller = b;
+    if (mag_cmp < 0) {
+        result_is_negative = true;
+        larger = b;
+        smaller = a;
     }
 
-    if (!ensure_capacity(dst, a->used, now)) return false;
+    if (!ensure_capacity(dst, larger->used, now)) return false;
 
     limb_t *d = get_limbs(dst);
-    const limb_t *l = get_const_limbs(a);
-    const limb_t *r = get_const_limbs(b);
+    const limb_t *l = get_const_limbs(larger);
+    const limb_t *r = get_const_limbs(smaller);
 
     uint64_t borrow = 0;
     size_t i = 0;
-    for (; i < a->used; ++i) {
+    for (; i < larger->used; ++i) {
         uint64_t diff = (uint64_t)l[i] - borrow;
-        if (i < b->used) diff -= r[i];
+        if (i < smaller->used) diff -= r[i];
         d[i] = (limb_t)diff;
         borrow = (diff >> 32) & 1;
     }
@@ -927,6 +972,16 @@ _Bool ttak_bigint_div(ttak_bigint_t *q, ttak_bigint_t *r, const ttak_bigint_t *n
     const limb_t *d_limbs = get_const_limbs(&d_tmp);
     size_t n_used = n_tmp.used;
     size_t d_used = d_tmp.used;
+
+    if (d_used == 1) {
+        _Bool ok = ttak_bigint_div_u64(q, r, n, (uint64_t)d_limbs[0], now);
+        if (ok && q) {
+            q->is_negative = n->is_negative != d->is_negative;
+        }
+        ttak_bigint_free(&n_tmp, now);
+        ttak_bigint_free(&d_tmp, now);
+        return ok;
+    }
 
     size_t m = n_used - d_used;
     size_t q_limbs_len = m + 1;

@@ -35,6 +35,24 @@ void ttak_bigreal_free(ttak_bigreal_t *br, uint64_t now) {
     ttak_bigint_free(&br->mantissa, now);
 }
 
+void ttak_bigreal_normalize(ttak_bigreal_t *br, uint64_t now) {
+    if (!br || ttak_bigint_is_zero(&br->mantissa)) {
+        if (br) br->exponent = 0;
+        return;
+    }
+    ttak_bigint_t q, r;
+    ttak_bigint_init(&q, now);
+    ttak_bigint_init(&r, now);
+    while (true) {
+        if (!ttak_bigint_div_u64(&q, &r, &br->mantissa, 10, now)) break;
+        if (!ttak_bigint_is_zero(&r)) break; // Not divisible by 10
+        ttak_bigint_copy(&br->mantissa, &q, now);
+        br->exponent++;
+    }
+    ttak_bigint_free(&q, now);
+    ttak_bigint_free(&r, now);
+}
+
 _Bool ttak_bigreal_copy(ttak_bigreal_t *dst, const ttak_bigreal_t *src, uint64_t now) {
     if (dst == src) return true;
     dst->exponent = src->exponent;
@@ -151,6 +169,9 @@ _Bool ttak_bigreal_div(ttak_bigreal_t *dst, const ttak_bigreal_t *lhs, const tta
     
     dst->exponent = lhs->exponent - rhs->exponent - 6;
     _Bool ok = ttak_bigint_div(&dst->mantissa, &r_rem, &lhs_shifted, &rhs->mantissa, now);
+    if (ok) {
+        ttak_bigreal_normalize(dst, now);
+    }
     
     ttak_bigint_free(&r_rem, now);
     ttak_bigint_free(&lhs_shifted, now);
