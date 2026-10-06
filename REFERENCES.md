@@ -75,3 +75,28 @@ This document preserves the academic and historical lineage of the mathematical 
 - **Historical concept:** Residue-class lookup tables for size-class indexing.
 - **Reference:** Nam Byeong-gil, *"Sanhak Jeong-ui (算學正義)"*, 1849.
 - **Application in code:** `select_block` uses a bitmask-based residue lookup to choose the appropriate buddy block order, reducing fragmentation through deterministic size-class selection.
+
+---
+
+## Binary GCD in `src/math/factor.c`
+
+- **Historical concept:** Daeyeonguilsul (大衍求一術) — subtraction- and parity-based tabular reduction for coprime/remainder evaluation, structurally mapping to Stein's binary GCD algorithm.
+- **Reference:** Traditional Korean mathematical manuscripts on Daeyeonguilsul (大衍求一術).
+- **Application in code:** `ttak_gcd_u64` replaces division with bit-shifts and subtractions (`__builtin_ctzll`), eliminating division latency in prime factorization routines.
+
+---
+
+## Modular Multiplicative Inverse in `src/math/ntt.c`
+
+- **Historical concept:** Daeyeonguilsul (大衍求一術) tabular continuous reduction (연초법/Yeon-cho) for solving linear congruences.
+- **Reference:** Traditional Korean mathematical manuscripts on Daeyeonguilsul (大衍求一術).
+- **Application in code:** `ttak_mod_inverse` uses the extended Euclidean algorithm with tabular reduction ordering, minimizing branch divergence during residue calculations in NTT and BigInt operations.
+
+---
+
+## Numerical Accumulation in `src/math/calculus.c`
+
+- **Historical concept:** Jeungseunggaebang (增乘開方法) — Horner-style sequential linear accumulation for polynomial root finding and summation.
+- **Reference:** Traditional Korean algebraic treatises on Jeungseunggaebang (增乘開方法).
+- **Application in code:** `integrate_worker` (Simpson's rule) and `ttak_calculus_rk4_step` (Runge-Kutta 4th order) use linear Horner accumulation to compute weighted multi-stage sums with minimal rounding error.
+
