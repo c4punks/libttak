@@ -64,6 +64,15 @@ void ttak_net_driver_detect(ttak_net_driver_ops_t *ops,
                             ttak_net_os_t *os,
                             const ttak_net_baremetal_spec_t *bm);
 
+/**
+ * @brief Explicitly fills driver vtable with bare-metal memory/NIC implementation.
+ *
+ * @param ops Output vtable to populate.
+ * @param bm  Bare-metal spec with optional overrides/allocators.
+ */
+void ttak_net_driver_get_baremetal(ttak_net_driver_ops_t *ops,
+                                   const ttak_net_baremetal_spec_t *bm);
+
 #ifdef __cplusplus
 }
 #endif
