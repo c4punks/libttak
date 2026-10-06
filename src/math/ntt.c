@@ -90,10 +90,9 @@ uint64_t ttak_mod_pow(uint64_t base, uint64_t exp, uint64_t mod) {
 }
 
 /**
- * @brief Compute the modular inverse using the tabular method described in Daeyeonguilsul (Dae-yeon-gu-il-sul).
+ * @brief Compute the modular inverse using the extended Euclidean algorithm.
  *
- * Follows the Yeon-cho reduction order to minimize divisions and branch divergence in NTT and BigInt workloads.
- * Historical reference: "Dae-yeon-gu-il-sul" (Daeyeonguilsul).
+ * Computes multiplicative inverse modulo mod for residue reduction in NTT and BigInt operations.
  *
  * @param value Input residue.
  * @param mod   Modulus.
@@ -110,7 +109,7 @@ uint64_t ttak_mod_inverse(uint64_t value, uint64_t mod) {
 
     if (m0 == 1) return 0;
 
-    /* Continuous reduction (Yeon-cho) ordered as in the Daeyeonguilsul tables */
+    /* Extended Euclidean algorithm loop */
     while (a > 1) {
         if (m0 == 0) return 0; // Should not happen with mod > 1
         q = a / m0;

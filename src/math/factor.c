@@ -37,10 +37,9 @@ static const uint16_t k_small_primes[] = {
 };
 
 /**
- * @brief Compute Greatest Common Divisor using the binary (Stein) algorithm outlined in Dae-yeon-gu-il-sul.
+ * @brief Compute Greatest Common Divisor using the binary GCD (Stein) algorithm.
  *
- * Uses shift/add steps instead of division to match the manuscript's table-friendly layout.
- * Historical reference: "Dae-yeon-gu-il-sul" (Daeyeonguilsul).
+ * Uses shift/subtract steps instead of division for efficient modular arithmetic.
  */
 static inline uint64_t ttak_gcd_u64(uint64_t a, uint64_t b) {
     if (a == 0) return b;

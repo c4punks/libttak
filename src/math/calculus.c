@@ -87,7 +87,7 @@ static void* integrate_worker(void *arg) {
     ttak_bigreal_init_u64(&t1, 6, task->now);
     ttak_bigreal_div(&h, &h, &t1, task->now);
     
-    /* Jeungseunggaebang: Sequential linear accumulation */
+    /* Simpson's rule weighted sum: fa + 4*fmid + fb */
     ttak_bigreal_init_u64(&t1, 4, task->now);
     ttak_bigreal_mul(&t1, &t1, &fmid, task->now);
     ttak_bigreal_add(&t1, &t1, &fa, task->now);
@@ -200,7 +200,7 @@ _Bool ttak_calculus_rk4_step(ttak_bigreal_t *y_next, ttak_math_func_t f, const t
     ttak_bigreal_init(&sum_k, now);
     ttak_bigreal_init_u64(&factor_2, 2, now);
 
-    /* Jeungseunggaebang logic for weighted sum using linear accumulation */
+    /* Weighted stage accumulation: k1 + 2*k2 + 2*k3 + k4 */
     ttak_bigreal_copy(&sum_k, &k1, now);
     
     ttak_bigreal_mul(&tmp_y, &factor_2, &k2, now);
