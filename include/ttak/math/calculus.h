@@ -15,14 +15,34 @@
 typedef _Bool (*ttak_math_func_t)(ttak_bigreal_t *res, const ttak_bigreal_t *x, void *ctx, uint64_t now);
 
 /**
+ * @brief Multivariable function signature for partial derivatives.
+ * @param res Destination for scalar output.
+ * @param x_vec Input vector array of bigreals.
+ * @param dim Number of dimensions in x_vec.
+ * @param ctx User context.
+ * @param now Timestamp.
+ * @return true on success.
+ */
+typedef _Bool (*ttak_math_vec_func_t)(ttak_bigreal_t *res, const ttak_bigreal_t *x_vec, uint8_t dim, void *ctx, uint64_t now);
+
+/**
  * @brief Numerical differentiation at point x.
  */
 _Bool ttak_calculus_diff(ttak_bigreal_t *res, ttak_math_func_t f, const ttak_bigreal_t *x, void *ctx, uint64_t now);
 
 /**
- * @brief Partial differentiation at point x for a specific dimension.
+ * @brief Partial differentiation of f with respect to component `target_dim`.
+ *
+ * @param res Destination for the partial derivative.
+ * @param f Multivariable function f(x_vec, dim).
+ * @param x_vec Input point vector.
+ * @param dim Total dimensionality of x_vec.
+ * @param target_dim Index of variable to differentiate with respect to (0 <= target_dim < dim).
+ * @param ctx User context.
+ * @param now Timestamp.
+ * @return true on success, false on failure or out-of-range target_dim.
  */
-_Bool ttak_calculus_partial_diff(ttak_bigreal_t *res, ttak_math_func_t f, const ttak_bigreal_t *x_vec, uint8_t dim, void *ctx, uint64_t now);
+_Bool ttak_calculus_partial_diff(ttak_bigreal_t *res, ttak_math_vec_func_t f, const ttak_bigreal_t *x_vec, uint8_t dim, uint8_t target_dim, void *ctx, uint64_t now);
 
 /**
  * @brief Numerical definite integration over [a, b].

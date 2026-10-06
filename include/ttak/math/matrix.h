@@ -47,6 +47,7 @@ _Bool ttak_matrix_set_rotation(tt_shared_matrix_t *m, tt_owner_t *owner, uint8_t
 
 /**
  * @brief Transformation: Shearing.
+ * Shears axis 0 (X) by factor on axis 1 (Y), or axis 1 (Y) by factor on axis 0 (X).
  */
 _Bool ttak_matrix_set_shearing(tt_shared_matrix_t *m, tt_owner_t *owner, uint8_t axis, const ttak_bigreal_t *factor, uint64_t now);
 
@@ -54,6 +55,16 @@ _Bool ttak_matrix_set_shearing(tt_shared_matrix_t *m, tt_owner_t *owner, uint8_t
  * @brief Transformation: Axis Flipping.
  */
 _Bool ttak_matrix_set_flip(tt_shared_matrix_t *m, tt_owner_t *owner, uint8_t axis, uint64_t now);
+
+/**
+ * @brief Computes determinant of square matrix (up to 4x4).
+ */
+_Bool ttak_matrix_determinant(ttak_bigreal_t *det, tt_shared_matrix_t *m, tt_owner_t *owner, uint64_t now);
+
+/**
+ * @brief Computes inverse of square matrix (up to 4x4) using Gaussian elimination.
+ */
+_Bool ttak_matrix_invert(tt_shared_matrix_t *inv, tt_shared_matrix_t *m, tt_owner_t *owner, uint64_t now);
 
 /**
  * @brief Initializes the matrix as a 4x4 Orthogonal Latin Square with magic sums.

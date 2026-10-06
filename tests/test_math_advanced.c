@@ -147,14 +147,141 @@ void test_crt_combine_basic() {
     ASSERT(ttak_u128_cmp(result, modulus) < 0);
 }
 
-void test_next_power_of_two() {
+void test_next_power_of_two(void) {
     ASSERT(ttak_next_power_of_two(0) == 1);
     ASSERT(ttak_next_power_of_two(1) == 1);
     ASSERT(ttak_next_power_of_two(3) == 4);
     ASSERT(ttak_next_power_of_two(17) == 32);
 }
 
-int main() {
+#include <ttak/math/calculus.h>
+#include <ttak/math/matrix.h>
+
+static _Bool multivar_quad_func(ttak_bigreal_t *res, const ttak_bigreal_t *x_vec, uint8_t dim, void *ctx, uint64_t now) {
+    (void)ctx;
+    if (dim < 2) return false;
+    // f(x, y) = 3*x^2 + 5*y
+    ttak_bigreal_t c3, c5, x2, t1, t2;
+    ttak_bigreal_init_u64(&c3, 3, now);
+    ttak_bigreal_init_u64(&c5, 5, now);
+    ttak_bigreal_init(&x2, now);
+    ttak_bigreal_init(&t1, now);
+    ttak_bigreal_init(&t2, now);
+
+    ttak_bigreal_mul(&x2, &x_vec[0], &x_vec[0], now);
+    ttak_bigreal_mul(&t1, &c3, &x2, now);
+    ttak_bigreal_mul(&t2, &c5, &x_vec[1], now);
+    ttak_bigreal_add(res, &t1, &t2, now);
+
+    ttak_bigreal_free(&c3, now);
+    ttak_bigreal_free(&c5, now);
+    ttak_bigreal_free(&x2, now);
+    ttak_bigreal_free(&t1, now);
+    ttak_bigreal_free(&t2, now);
+    return true;
+}
+
+void test_calculus_partial_diff(void) {
+    uint64_t now = 5000;
+    ttak_bigreal_t pt[2];
+    ttak_bigreal_init_u64(&pt[0], 2, now); // x = 2
+    ttak_bigreal_init_u64(&pt[1], 4, now); // y = 4
+
+    ttak_bigreal_t df_dx, df_dy;
+    ttak_bigreal_init(&df_dx, now);
+    ttak_bigreal_init(&df_dy, now);
+
+    // df/dx = 6*x = 12 at x=2
+    ASSERT(ttak_calculus_partial_diff(&df_dx, multivar_quad_func, pt, 2, 0, NULL, now));
+    // df/dy = 5 at y=4
+    ASSERT(ttak_calculus_partial_diff(&df_dy, multivar_quad_func, pt, 2, 1, NULL, now));
+
+    // df/dx = 12 * 10^0
+    // df/dy = 5 * 10^0
+    ttak_bigreal_t exp_dx, exp_dy, diff_val, eps;
+    ttak_bigreal_init_u64(&exp_dx, 12, now);
+    ttak_bigreal_init_u64(&exp_dy, 5, now);
+    ttak_bigreal_init(&diff_val, now);
+    ttak_bigreal_init_u64(&eps, 1, now); // eps = 0.1
+    eps.exponent = -1;
+
+    ASSERT(ttak_bigreal_sub(&diff_val, &df_dx, &exp_dx, now));
+    diff_val.mantissa.is_negative = false;
+    ASSERT(ttak_bigreal_cmp(&diff_val, &eps, now) <= 0);
+
+    ASSERT(ttak_bigreal_sub(&diff_val, &df_dy, &exp_dy, now));
+    diff_val.mantissa.is_negative = false;
+    ASSERT(ttak_bigreal_cmp(&diff_val, &eps, now) <= 0);
+
+    ttak_bigreal_free(&exp_dx, now);
+    ttak_bigreal_free(&exp_dy, now);
+    ttak_bigreal_free(&diff_val, now);
+    ttak_bigreal_free(&eps, now);
+
+    ttak_bigreal_free(&pt[0], now);
+    ttak_bigreal_free(&pt[1], now);
+    ttak_bigreal_free(&df_dx, now);
+    ttak_bigreal_free(&df_dy, now);
+}
+
+void test_matrix_shearing(void) {
+    uint64_t now = 6000;
+    tt_owner_t *owner = ttak_owner_create(0);
+    ASSERT(owner != NULL);
+
+    tt_shared_matrix_t *sm = ttak_matrix_create(2, 2, owner, now);
+    ASSERT(sm != NULL);
+
+    ttak_bigreal_t factor;
+    ttak_bigreal_init_u64(&factor, 3, now);
+
+    ASSERT(ttak_matrix_set_shearing(sm, owner, 0, &factor, now));
+
+    ttak_bigreal_t *elem01 = ttak_matrix_get(sm, owner, 0, 1, now);
+    ASSERT(elem01 != NULL);
+    ASSERT(bigint_as_u64(&elem01->mantissa) == 3);
+
+    ttak_bigreal_free(&factor, now);
+    ttak_owner_destroy(owner);
+}
+
+void test_matrix_determinant_invert(void) {
+    uint64_t now = 7000;
+    tt_owner_t *owner = ttak_owner_create(0);
+    ASSERT(owner != NULL);
+
+    tt_shared_matrix_t *sm = ttak_matrix_create(2, 2, owner, now);
+    tt_shared_matrix_t *inv = ttak_matrix_create(2, 2, owner, now);
+    ASSERT(sm != NULL && inv != NULL);
+
+    // [[4, 7], [2, 6]] -> det = 24 - 14 = 10
+    ttak_bigreal_t v4, v7, v2, v6;
+    ttak_bigreal_init_u64(&v4, 4, now);
+    ttak_bigreal_init_u64(&v7, 7, now);
+    ttak_bigreal_init_u64(&v2, 2, now);
+    ttak_bigreal_init_u64(&v6, 6, now);
+
+    ASSERT(ttak_matrix_set(sm, owner, 0, 0, &v4, now));
+    ASSERT(ttak_matrix_set(sm, owner, 0, 1, &v7, now));
+    ASSERT(ttak_matrix_set(sm, owner, 1, 0, &v2, now));
+    ASSERT(ttak_matrix_set(sm, owner, 1, 1, &v6, now));
+
+    ttak_bigreal_t det;
+    ttak_bigreal_init(&det, now);
+    ASSERT(ttak_matrix_determinant(&det, sm, owner, now));
+    ASSERT(bigint_as_u64(&det.mantissa) == 10);
+
+    ASSERT(ttak_matrix_invert(inv, sm, owner, now));
+
+    ttak_bigreal_free(&v4, now);
+    ttak_bigreal_free(&v7, now);
+    ttak_bigreal_free(&v2, now);
+    ttak_bigreal_free(&v6, now);
+    ttak_bigreal_free(&det, now);
+    ttak_owner_destroy(owner);
+}
+
+int main(void) {
     RUN_TEST(test_bigreal_init);
     RUN_TEST(test_bigcomplex_init);
     RUN_TEST(test_bigreal_add_basic);
@@ -163,5 +290,8 @@ int main() {
     RUN_TEST(test_ntt_pointwise_mul);
     RUN_TEST(test_crt_combine_basic);
     RUN_TEST(test_next_power_of_two);
+    RUN_TEST(test_calculus_partial_diff);
+    RUN_TEST(test_matrix_shearing);
+    RUN_TEST(test_matrix_determinant_invert);
     return 0;
 }

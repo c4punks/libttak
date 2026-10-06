@@ -3,6 +3,7 @@
 #include <ttak/async/future.h>
 #include <ttak/mem/mem.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <math.h>
 
 _Bool ttak_calculus_diff(ttak_bigreal_t *res, ttak_math_func_t f, const ttak_bigreal_t *x, void *ctx, uint64_t now) {
@@ -47,9 +48,62 @@ cleanup:
     return true;
 }
 
-_Bool ttak_calculus_partial_diff(ttak_bigreal_t *res, ttak_math_func_t f, const ttak_bigreal_t *x_vec, uint8_t dim, void *ctx, uint64_t now) {
-    (void)res; (void)f; (void)x_vec; (void)dim; (void)ctx; (void)now;
-    return false; // Not implemented for now.
+_Bool ttak_calculus_partial_diff(ttak_bigreal_t *res, ttak_math_vec_func_t f, const ttak_bigreal_t *x_vec, uint8_t dim, uint8_t target_dim, void *ctx, uint64_t now) {
+    if (!res || !f || !x_vec || dim == 0 || target_dim >= dim) return false;
+
+    ttak_bigreal_t *x_plus = malloc(sizeof(ttak_bigreal_t) * dim);
+    ttak_bigreal_t *x_minus = malloc(sizeof(ttak_bigreal_t) * dim);
+    if (!x_plus || !x_minus) {
+        free(x_plus);
+        free(x_minus);
+        return false;
+    }
+
+    for (uint8_t i = 0; i < dim; i++) {
+        ttak_bigreal_init(&x_plus[i], now);
+        ttak_bigreal_init(&x_minus[i], now);
+        ttak_bigreal_copy(&x_plus[i], &x_vec[i], now);
+        ttak_bigreal_copy(&x_minus[i], &x_vec[i], now);
+    }
+
+    ttak_bigreal_t h, f_plus, f_minus, num, den;
+    ttak_bigreal_init(&h, now);
+    ttak_bigreal_init(&f_plus, now);
+    ttak_bigreal_init(&f_minus, now);
+    ttak_bigreal_init(&num, now);
+    ttak_bigreal_init(&den, now);
+
+    // Set small h = 10^-3 = 0.001
+    ttak_bigreal_init_u64(&h, 1, now);
+    h.exponent = -3;
+
+    ttak_bigreal_add(&x_plus[target_dim], &x_vec[target_dim], &h, now);
+    ttak_bigreal_sub(&x_minus[target_dim], &x_vec[target_dim], &h, now);
+
+    _Bool ok = false;
+    if (f(&f_plus, x_plus, dim, ctx, now) && f(&f_minus, x_minus, dim, ctx, now)) {
+        if (ttak_bigreal_sub(&num, &f_plus, &f_minus, now)) {
+            ttak_bigreal_init_u64(&den, 2, now);
+            if (ttak_bigreal_mul(&den, &den, &h, now)) {
+                ok = ttak_bigreal_div(res, &num, &den, now);
+            }
+        }
+    }
+
+    ttak_bigreal_free(&h, now);
+    ttak_bigreal_free(&f_plus, now);
+    ttak_bigreal_free(&f_minus, now);
+    ttak_bigreal_free(&num, now);
+    ttak_bigreal_free(&den, now);
+
+    for (uint8_t i = 0; i < dim; i++) {
+        ttak_bigreal_free(&x_plus[i], now);
+        ttak_bigreal_free(&x_minus[i], now);
+    }
+    free(x_plus);
+    free(x_minus);
+
+    return ok;
 }
 
 typedef struct {

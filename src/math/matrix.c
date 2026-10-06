@@ -212,8 +212,299 @@ _Bool ttak_matrix_set_rotation(tt_shared_matrix_t *m, tt_owner_t *owner, uint8_t
 }
 
 _Bool ttak_matrix_set_shearing(tt_shared_matrix_t *m, tt_owner_t *owner, uint8_t axis, const ttak_bigreal_t *factor, uint64_t now) {
-    (void)m; (void)owner; (void)axis; (void)factor; (void)now;
+    if (!m || !owner || !factor) return false;
+    ttak_shared_result_t res;
+    ttak_matrix_t *mat = (ttak_matrix_t *)m->base.access(&m->base, owner, &res);
+    if (!mat) return false;
+
+    // Reset to identity
+    for (int i = 0; i < 16; i++) {
+        ttak_bigint_set_u64(&mat->elements[i].mantissa, 0, now);
+        mat->elements[i].exponent = 0;
+    }
+    for (int i = 0; i < mat->rows && i < mat->cols; i++) {
+        ttak_bigint_set_u64(&mat->elements[i * mat->cols + i].mantissa, 1, now);
+        mat->elements[i * mat->cols + i].exponent = 0;
+    }
+
+    if (mat->rows >= 2 && mat->cols >= 2) {
+        if (axis == 0) {
+            // Shearing X along Y: row 0, col 1 = factor
+            ttak_bigreal_copy(&mat->elements[0 * mat->cols + 1], factor, now);
+        } else if (axis == 1) {
+            // Shearing Y along X: row 1, col 0 = factor
+            ttak_bigreal_copy(&mat->elements[1 * mat->cols + 0], factor, now);
+        }
+    }
+
+    m->base.release(&m->base);
     return true;
+}
+
+_Bool ttak_matrix_determinant(ttak_bigreal_t *det, tt_shared_matrix_t *m, tt_owner_t *owner, uint64_t now) {
+    if (!det || !m || !owner) return false;
+    ttak_shared_result_t res;
+    ttak_matrix_t *mat = (ttak_matrix_t *)m->base.access(&m->base, owner, &res);
+    if (!mat || mat->rows != mat->cols) {
+        if (mat) m->base.release(&m->base);
+        return false;
+    }
+
+    uint8_t n = mat->rows;
+    if (n == 1) {
+        ttak_bigreal_copy(det, &mat->elements[0], now);
+        m->base.release(&m->base);
+        return true;
+    }
+    if (n == 2) {
+        // det = a*d - b*c
+        ttak_bigreal_t ad, bc;
+        ttak_bigreal_init(&ad, now);
+        ttak_bigreal_init(&bc, now);
+        _Bool ok = ttak_bigreal_mul(&ad, &mat->elements[0], &mat->elements[3], now) &&
+                   ttak_bigreal_mul(&bc, &mat->elements[1], &mat->elements[2], now) &&
+                   ttak_bigreal_sub(det, &ad, &bc, now);
+        ttak_bigreal_free(&ad, now);
+        ttak_bigreal_free(&bc, now);
+        m->base.release(&m->base);
+        return ok;
+    }
+
+    // Copy matrix to a local working array of size n x n
+    ttak_bigreal_t a[4][4];
+    for (uint8_t i = 0; i < n; i++) {
+        for (uint8_t j = 0; j < n; j++) {
+            ttak_bigreal_init(&a[i][j], now);
+            ttak_bigreal_copy(&a[i][j], &mat->elements[i * n + j], now);
+        }
+    }
+
+    _Bool ok = true;
+    int sign = 1;
+    ttak_bigreal_t det_val, zero, factor, tmp, prod;
+    ttak_bigreal_init(&det_val, now);
+    ttak_bigreal_init_u64(&det_val, 1, now);
+    ttak_bigreal_init(&zero, now);
+    ttak_bigreal_init_u64(&zero, 0, now);
+    ttak_bigreal_init(&factor, now);
+    ttak_bigreal_init(&tmp, now);
+    ttak_bigreal_init(&prod, now);
+
+    for (uint8_t i = 0; i < n; i++) {
+        // Find pivot
+        int pivot = -1;
+        for (uint8_t r = i; r < n; r++) {
+            if (ttak_bigreal_cmp(&a[r][i], &zero, now) != 0) {
+                pivot = r;
+                break;
+            }
+        }
+        if (pivot == -1) {
+            ttak_bigreal_init_u64(det, 0, now);
+            goto cleanup_det;
+        }
+
+        if (pivot != i) {
+            for (uint8_t c = 0; c < n; c++) {
+                ttak_bigreal_copy(&tmp, &a[i][c], now);
+                ttak_bigreal_copy(&a[i][c], &a[pivot][c], now);
+                ttak_bigreal_copy(&a[pivot][c], &tmp, now);
+            }
+            sign = -sign;
+        }
+
+        ttak_bigreal_mul(&det_val, &det_val, &a[i][i], now);
+
+        for (uint8_t r = i + 1; r < n; r++) {
+            if (ttak_bigreal_cmp(&a[r][i], &zero, now) == 0) continue;
+            if (!ttak_bigreal_div(&factor, &a[r][i], &a[i][i], now)) {
+                ok = false;
+                goto cleanup_det;
+            }
+            for (uint8_t c = i; c < n; c++) {
+                ttak_bigreal_mul(&prod, &factor, &a[i][c], now);
+                ttak_bigreal_sub(&a[r][c], &a[r][c], &prod, now);
+            }
+        }
+    }
+
+    if (sign < 0) {
+        det_val.mantissa.is_negative = !det_val.mantissa.is_negative;
+    }
+    ttak_bigreal_copy(det, &det_val, now);
+
+cleanup_det:
+    ttak_bigreal_free(&det_val, now);
+    ttak_bigreal_free(&zero, now);
+    ttak_bigreal_free(&factor, now);
+    ttak_bigreal_free(&tmp, now);
+    ttak_bigreal_free(&prod, now);
+    for (uint8_t i = 0; i < n; i++) {
+        for (uint8_t j = 0; j < n; j++) {
+            ttak_bigreal_free(&a[i][j], now);
+        }
+    }
+    m->base.release(&m->base);
+    return ok;
+}
+
+_Bool ttak_matrix_invert(tt_shared_matrix_t *inv, tt_shared_matrix_t *m, tt_owner_t *owner, uint64_t now) {
+    if (!inv || !m || !owner) return false;
+    ttak_shared_result_t rm, ri;
+    ttak_matrix_t *mat = (ttak_matrix_t *)m->base.access(&m->base, owner, &rm);
+    ttak_matrix_t *out = (ttak_matrix_t *)inv->base.access(&inv->base, owner, &ri);
+    if (!mat || !out || mat->rows != mat->cols || out->rows != mat->rows || out->cols != mat->cols) {
+        if (mat) m->base.release(&m->base);
+        if (out) inv->base.release(&inv->base);
+        return false;
+    }
+
+    uint8_t n = mat->rows;
+    if (n == 1) {
+        ttak_bigreal_t one;
+        ttak_bigreal_init_u64(&one, 1, now);
+        _Bool ok = ttak_bigreal_div(&out->elements[0], &one, &mat->elements[0], now);
+        ttak_bigreal_free(&one, now);
+        m->base.release(&m->base);
+        inv->base.release(&inv->base);
+        return ok;
+    }
+    if (n == 2) {
+        // [a, b; c, d]^-1 = 1/det * [d, -b; -c, a]
+        ttak_bigreal_t det, ad, bc, inv_det, one;
+        ttak_bigreal_init(&det, now);
+        ttak_bigreal_init(&ad, now);
+        ttak_bigreal_init(&bc, now);
+        ttak_bigreal_init(&inv_det, now);
+        ttak_bigreal_init_u64(&one, 1, now);
+
+        _Bool ok = ttak_bigreal_mul(&ad, &mat->elements[0], &mat->elements[3], now) &&
+                   ttak_bigreal_mul(&bc, &mat->elements[1], &mat->elements[2], now) &&
+                   ttak_bigreal_sub(&det, &ad, &bc, now) &&
+                   ttak_bigreal_div(&inv_det, &one, &det, now);
+
+        if (ok) {
+            ttak_bigreal_t d, neg_b, neg_c, a_val;
+            ttak_bigreal_init(&d, now);
+            ttak_bigreal_init(&neg_b, now);
+            ttak_bigreal_init(&neg_c, now);
+            ttak_bigreal_init(&a_val, now);
+
+            ttak_bigreal_copy(&d, &mat->elements[3], now);
+            ttak_bigreal_copy(&neg_b, &mat->elements[1], now);
+            neg_b.mantissa.is_negative = !neg_b.mantissa.is_negative;
+            ttak_bigreal_copy(&neg_c, &mat->elements[2], now);
+            neg_c.mantissa.is_negative = !neg_c.mantissa.is_negative;
+            ttak_bigreal_copy(&a_val, &mat->elements[0], now);
+
+            ttak_bigreal_mul(&out->elements[0], &d, &inv_det, now);
+            ttak_bigreal_mul(&out->elements[1], &neg_b, &inv_det, now);
+            ttak_bigreal_mul(&out->elements[2], &neg_c, &inv_det, now);
+            ttak_bigreal_mul(&out->elements[3], &a_val, &inv_det, now);
+
+            ttak_bigreal_free(&d, now);
+            ttak_bigreal_free(&neg_b, now);
+            ttak_bigreal_free(&neg_c, now);
+            ttak_bigreal_free(&a_val, now);
+        }
+
+        ttak_bigreal_free(&det, now);
+        ttak_bigreal_free(&ad, now);
+        ttak_bigreal_free(&bc, now);
+        ttak_bigreal_free(&inv_det, now);
+        ttak_bigreal_free(&one, now);
+
+        m->base.release(&m->base);
+        inv->base.release(&inv->base);
+        return ok;
+    }
+
+    ttak_bigreal_t a[4][4];
+    ttak_bigreal_t b[4][4];
+
+    for (uint8_t i = 0; i < n; i++) {
+        for (uint8_t j = 0; j < n; j++) {
+            ttak_bigreal_init(&a[i][j], now);
+            ttak_bigreal_init(&b[i][j], now);
+            ttak_bigreal_copy(&a[i][j], &mat->elements[i * n + j], now);
+            ttak_bigreal_init_u64(&b[i][j], (i == j) ? 1 : 0, now);
+        }
+    }
+
+    ttak_bigreal_t zero, pivot_val, factor, tmp, prod;
+    ttak_bigreal_init(&zero, now);
+    ttak_bigreal_init_u64(&zero, 0, now);
+    ttak_bigreal_init(&pivot_val, now);
+    ttak_bigreal_init(&factor, now);
+    ttak_bigreal_init(&tmp, now);
+    ttak_bigreal_init(&prod, now);
+
+    _Bool ok = true;
+    for (uint8_t i = 0; i < n; i++) {
+        int pivot = -1;
+        for (uint8_t r = i; r < n; r++) {
+            if (ttak_bigreal_cmp(&a[r][i], &zero, now) != 0) {
+                pivot = r;
+                break;
+            }
+        }
+        if (pivot == -1) {
+            ok = false;
+            goto cleanup_inv;
+        }
+
+        if (pivot != i) {
+            for (uint8_t c = 0; c < n; c++) {
+                ttak_bigreal_copy(&tmp, &a[i][c], now);
+                ttak_bigreal_copy(&a[i][c], &a[pivot][c], now);
+                ttak_bigreal_copy(&a[pivot][c], &tmp, now);
+
+                ttak_bigreal_copy(&tmp, &b[i][c], now);
+                ttak_bigreal_copy(&b[i][c], &b[pivot][c], now);
+                ttak_bigreal_copy(&b[pivot][c], &tmp, now);
+            }
+        }
+
+        ttak_bigreal_copy(&pivot_val, &a[i][i], now);
+        for (uint8_t c = 0; c < n; c++) {
+            ttak_bigreal_div(&a[i][c], &a[i][c], &pivot_val, now);
+            ttak_bigreal_div(&b[i][c], &b[i][c], &pivot_val, now);
+        }
+
+        for (uint8_t r = 0; r < n; r++) {
+            if (r == i || ttak_bigreal_cmp(&a[r][i], &zero, now) == 0) continue;
+            ttak_bigreal_copy(&factor, &a[r][i], now);
+            for (uint8_t c = 0; c < n; c++) {
+                ttak_bigreal_mul(&prod, &factor, &a[i][c], now);
+                ttak_bigreal_sub(&a[r][c], &a[r][c], &prod, now);
+
+                ttak_bigreal_mul(&prod, &factor, &b[i][c], now);
+                ttak_bigreal_sub(&b[r][c], &b[r][c], &prod, now);
+            }
+        }
+    }
+
+    for (uint8_t i = 0; i < n; i++) {
+        for (uint8_t j = 0; j < n; j++) {
+            ttak_bigreal_copy(&out->elements[i * n + j], &b[i][j], now);
+        }
+    }
+
+cleanup_inv:
+    ttak_bigreal_free(&zero, now);
+    ttak_bigreal_free(&pivot_val, now);
+    ttak_bigreal_free(&factor, now);
+    ttak_bigreal_free(&tmp, now);
+    ttak_bigreal_free(&prod, now);
+    for (uint8_t i = 0; i < n; i++) {
+        for (uint8_t j = 0; j < n; j++) {
+            ttak_bigreal_free(&a[i][j], now);
+            ttak_bigreal_free(&b[i][j], now);
+        }
+    }
+    m->base.release(&m->base);
+    inv->base.release(&inv->base);
+    return ok;
 }
 
 _Bool ttak_matrix_set_flip(tt_shared_matrix_t *m, tt_owner_t *owner, uint8_t axis, uint64_t now) {
