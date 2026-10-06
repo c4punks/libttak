@@ -146,6 +146,31 @@ ttak_io_status_t ttak_net_endpoint_force_restart(ttak_shared_net_endpoint_t *end
                                                  ttak_owner_t *owner,
                                                  uint64_t now);
 
+/**
+ * @brief Sets non-blocking I/O mode on the endpoint descriptor.
+ */
+ttak_io_status_t ttak_net_endpoint_set_nonblocking(ttak_shared_net_endpoint_t *endpoint,
+                                                   ttak_owner_t *owner,
+                                                   bool nonblocking,
+                                                   uint64_t now);
+
+/**
+ * @brief Configures TCP_NODELAY (Nagle algorithm disabled/enabled).
+ */
+ttak_io_status_t ttak_net_endpoint_set_nodelay(ttak_shared_net_endpoint_t *endpoint,
+                                               ttak_owner_t *owner,
+                                               bool nodelay,
+                                               uint64_t now);
+
+/**
+ * @brief Configures SO_REUSEADDR and SO_REUSEPORT (if available).
+ */
+ttak_io_status_t ttak_net_endpoint_set_reuse(ttak_shared_net_endpoint_t *endpoint,
+                                             ttak_owner_t *owner,
+                                             bool reuse_addr,
+                                             bool reuse_port,
+                                             uint64_t now);
+
 #ifdef __cplusplus
 }
 #endif

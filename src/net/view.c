@@ -1,6 +1,8 @@
 #include <ttak/net/view.h>
 #include <ttak/mols_control.h>
 #include <ttak/io/io.h>
+#include <string.h>
+#include <stdlib.h>
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -25,6 +27,7 @@
 #pragma comment(lib, "ws2_32.lib")
 #else
 #include <sys/socket.h>
+#include <sys/uio.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
@@ -172,3 +175,73 @@ void ttak_net_view_release(ttak_net_view_t *view) {
     view->slot = NULL;
     view->slot_lattice = NULL;
 }
+
+ttak_io_status_t ttak_net_view_readv(ttak_shared_net_endpoint_t *endpoint,
+                                     ttak_owner_t *owner,
+                                     const ttak_net_view_iovec_t *iov,
+                                     size_t iovcnt,
+                                     size_t *bytes_read,
+                                     int flags,
+                                     uint64_t now) {
+    if (!endpoint || !owner || !iov || iovcnt == 0 || !bytes_read) {
+        return TTAK_IO_ERR_INVALID_ARGUMENT;
+    }
+    *bytes_read = 0;
+
+    ttak_net_guard_snapshot_t snap;
+    ttak_io_status_t status = ttak_net_endpoint_snapshot_guard(endpoint, owner, &snap, now);
+    if (status != TTAK_IO_SUCCESS) return status;
+
+    int fd = snap.fd;
+    if (fd < 0) return TTAK_IO_ERR_INVALID_ARGUMENT;
+
+#if defined(_WIN32)
+    /* Emulate readv on Windows using WSARecv or iterative recv */
+    size_t total = 0;
+    for (size_t i = 0; i < iovcnt; ++i) {
+        if (!iov[i].iov_base || iov[i].iov_len == 0) continue;
+        int rc = recv(fd, (char *)iov[i].iov_base, (int)iov[i].iov_len, flags);
+        if (rc < 0) {
+            if (total > 0) break;
+            return TTAK_IO_ERR_SYS_FAILURE;
+        }
+        if (rc == 0) break; /* EOF */
+        total += (size_t)rc;
+        if ((size_t)rc < iov[i].iov_len) break; /* Short read */
+    }
+    *bytes_read = total;
+    ttak_net_endpoint_guard_commit(&snap, now);
+    return TTAK_IO_SUCCESS;
+#else
+    /* Use recvmsg on POSIX */
+    enum { MAX_STACK_IOV = 32 };
+    struct iovec stack_iov[MAX_STACK_IOV];
+    struct iovec *posix_iov = stack_iov;
+    if (iovcnt > MAX_STACK_IOV) {
+        posix_iov = malloc(iovcnt * sizeof(struct iovec));
+        if (!posix_iov) return TTAK_IO_ERR_SYS_FAILURE;
+    }
+
+    for (size_t i = 0; i < iovcnt; ++i) {
+        posix_iov[i].iov_base = iov[i].iov_base;
+        posix_iov[i].iov_len = iov[i].iov_len;
+    }
+
+    struct msghdr msg;
+    memset(&msg, 0, sizeof(msg));
+    msg.msg_iov = posix_iov;
+    msg.msg_iovlen = (int)iovcnt;
+
+    ssize_t rc = recvmsg(fd, &msg, flags);
+    if (posix_iov != stack_iov) free(posix_iov);
+
+    if (rc < 0) {
+        return TTAK_IO_ERR_SYS_FAILURE;
+    }
+
+    *bytes_read = (size_t)rc;
+    ttak_net_endpoint_guard_commit(&snap, now);
+    return TTAK_IO_SUCCESS;
+#endif
+}
+

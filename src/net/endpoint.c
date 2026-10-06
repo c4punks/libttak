@@ -22,8 +22,10 @@
 #else
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#include <fcntl.h>
 #endif
 #include <ttak/net/core/port.h>
 #include <ttak/net/core/port.h>
@@ -330,3 +332,103 @@ ttak_io_status_t ttak_net_endpoint_force_restart(ttak_shared_net_endpoint_t *end
     ttak_shared_net_endpoint_release(endpoint);
     return status;
 }
+
+ttak_io_status_t ttak_net_endpoint_set_nonblocking(ttak_shared_net_endpoint_t *endpoint,
+                                                   ttak_owner_t *owner,
+                                                   bool nonblocking,
+                                                   uint64_t now) {
+    ttak_net_endpoint_t *payload = NULL;
+    ttak_io_status_t status = ttak_net_endpoint_access(endpoint, owner, &payload, now, true);
+    if (status != TTAK_IO_SUCCESS) return status;
+
+    int fd = payload->guard.fd;
+    if (fd < 0) {
+        ttak_shared_net_endpoint_release(endpoint);
+        return TTAK_IO_ERR_INVALID_ARGUMENT;
+    }
+
+#if defined(_WIN32)
+    u_long mode = nonblocking ? 1 : 0;
+    int rc = ioctlsocket(fd, FIONBIO, &mode);
+#else
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags < 0) {
+        ttak_shared_net_endpoint_release(endpoint);
+        return TTAK_IO_ERR_SYS_FAILURE;
+    }
+    if (nonblocking) {
+        flags |= O_NONBLOCK;
+    } else {
+        flags &= ~O_NONBLOCK;
+    }
+    int rc = fcntl(fd, F_SETFL, flags);
+#endif
+
+    ttak_shared_net_endpoint_release(endpoint);
+    return (rc == 0) ? TTAK_IO_SUCCESS : TTAK_IO_ERR_SYS_FAILURE;
+}
+
+ttak_io_status_t ttak_net_endpoint_set_nodelay(ttak_shared_net_endpoint_t *endpoint,
+                                               ttak_owner_t *owner,
+                                               bool nodelay,
+                                               uint64_t now) {
+    ttak_net_endpoint_t *payload = NULL;
+    ttak_io_status_t status = ttak_net_endpoint_access(endpoint, owner, &payload, now, true);
+    if (status != TTAK_IO_SUCCESS) return status;
+
+    int fd = payload->guard.fd;
+    if (fd < 0) {
+        ttak_shared_net_endpoint_release(endpoint);
+        return TTAK_IO_ERR_INVALID_ARGUMENT;
+    }
+
+    int optval = nodelay ? 1 : 0;
+    int rc = endpoint_ops.socket_setopt(fd, IPPROTO_TCP, &optval, sizeof(optval));
+    if (rc != 0) {
+        /* Fallback direct setsockopt if driver returned error or no-op */
+#if defined(_WIN32)
+        rc = setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, (const char *)&optval, sizeof(optval));
+#else
+        rc = setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &optval, sizeof(optval));
+#endif
+    }
+
+    ttak_shared_net_endpoint_release(endpoint);
+    return (rc == 0) ? TTAK_IO_SUCCESS : TTAK_IO_ERR_SYS_FAILURE;
+}
+
+ttak_io_status_t ttak_net_endpoint_set_reuse(ttak_shared_net_endpoint_t *endpoint,
+                                             ttak_owner_t *owner,
+                                             bool reuse_addr,
+                                             bool reuse_port,
+                                             uint64_t now) {
+    ttak_net_endpoint_t *payload = NULL;
+    ttak_io_status_t status = ttak_net_endpoint_access(endpoint, owner, &payload, now, true);
+    if (status != TTAK_IO_SUCCESS) return status;
+
+    int fd = payload->guard.fd;
+    if (fd < 0) {
+        ttak_shared_net_endpoint_release(endpoint);
+        return TTAK_IO_ERR_INVALID_ARGUMENT;
+    }
+
+    int optval = reuse_addr ? 1 : 0;
+#if defined(_WIN32)
+    int rc = setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (const char *)&optval, sizeof(optval));
+    (void)reuse_port;
+#else
+    int rc = setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
+#if defined(SO_REUSEPORT)
+    if (rc == 0 && reuse_port) {
+        int val_port = 1;
+        rc = setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &val_port, sizeof(val_port));
+    }
+#else
+    (void)reuse_port;
+#endif
+#endif
+
+    ttak_shared_net_endpoint_release(endpoint);
+    return (rc == 0) ? TTAK_IO_SUCCESS : TTAK_IO_ERR_SYS_FAILURE;
+}
+

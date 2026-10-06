@@ -77,7 +77,7 @@ ttak_io_status_t ttak_io_guard_init(ttak_io_guard_t *guard,
     guard->fd = fd;
     guard->owner = owner;
     guard->ttl_ns = ttl_ns;
-    guard->expires_at = now + ttl_ns;
+    guard->expires_at = (UINT64_MAX - now < ttl_ns) ? UINT64_MAX : (now + ttl_ns);
     guard->last_used = now;
     guard->closed = false;
     ttak_io_format_resource_tag(guard);
@@ -97,7 +97,7 @@ ttak_io_status_t ttak_io_guard_refresh(ttak_io_guard_t *guard, uint64_t now) {
         return TTAK_IO_ERR_EXPIRED_GUARD;
     }
     guard->last_used = now;
-    guard->expires_at = now + guard->ttl_ns;
+    guard->expires_at = (UINT64_MAX - now < guard->ttl_ns) ? UINT64_MAX : (now + guard->ttl_ns);
     return TTAK_IO_SUCCESS;
 }
 

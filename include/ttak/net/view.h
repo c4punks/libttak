@@ -48,6 +48,27 @@ const uint8_t *ttak_net_view_data(const ttak_net_view_t *view);
  */
 void ttak_net_view_release(ttak_net_view_t *view);
 
+/**
+ * @brief Scatter-gather vector for zero-copy lattice / buffer transfer.
+ */
+typedef struct ttak_net_view_iovec {
+    void *iov_base;
+    size_t iov_len;
+} ttak_net_view_iovec_t;
+
+/**
+ * @brief Reads incoming network data into multiple scatter buffers (scatter-gather / readv).
+ *
+ * Automatically coordinates with lattice slots when enabled, or falls back to system readv/recvmsg.
+ */
+ttak_io_status_t ttak_net_view_readv(ttak_shared_net_endpoint_t *endpoint,
+                                     ttak_owner_t *owner,
+                                     const ttak_net_view_iovec_t *iov,
+                                     size_t iovcnt,
+                                     size_t *bytes_read,
+                                     int flags,
+                                     uint64_t now);
+
 #ifdef __cplusplus
 }
 #endif
