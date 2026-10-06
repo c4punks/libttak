@@ -432,3 +432,64 @@ ttak_io_status_t ttak_net_endpoint_set_reuse(ttak_shared_net_endpoint_t *endpoin
     return (rc == 0) ? TTAK_IO_SUCCESS : TTAK_IO_ERR_SYS_FAILURE;
 }
 
+ttak_io_status_t ttak_net_endpoint_set_buffer_sizes(ttak_shared_net_endpoint_t *endpoint,
+                                                    ttak_owner_t *owner,
+                                                    int rcvbuf,
+                                                    int sndbuf,
+                                                    uint64_t now) {
+    ttak_net_endpoint_t *payload = NULL;
+    ttak_io_status_t status = ttak_net_endpoint_access(endpoint, owner, &payload, now, true);
+    if (status != TTAK_IO_SUCCESS) return status;
+
+    int fd = payload->guard.fd;
+    if (fd < 0) {
+        ttak_shared_net_endpoint_release(endpoint);
+        return TTAK_IO_ERR_INVALID_ARGUMENT;
+    }
+
+    int rc = 0;
+    if (rcvbuf > 0) {
+#if defined(_WIN32)
+        rc = setsockopt(fd, SOL_SOCKET, SO_RCVBUF, (const char *)&rcvbuf, sizeof(rcvbuf));
+#else
+        rc = setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof(rcvbuf));
+#endif
+    }
+    if (rc == 0 && sndbuf > 0) {
+#if defined(_WIN32)
+        rc = setsockopt(fd, SOL_SOCKET, SO_SNDBUF, (const char *)&sndbuf, sizeof(sndbuf));
+#else
+        rc = setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf));
+#endif
+    }
+
+    ttak_shared_net_endpoint_release(endpoint);
+    return (rc == 0) ? TTAK_IO_SUCCESS : TTAK_IO_ERR_SYS_FAILURE;
+}
+
+ttak_io_status_t ttak_net_endpoint_set_keepalive(ttak_shared_net_endpoint_t *endpoint,
+                                                 ttak_owner_t *owner,
+                                                 bool keepalive,
+                                                 uint64_t now) {
+    ttak_net_endpoint_t *payload = NULL;
+    ttak_io_status_t status = ttak_net_endpoint_access(endpoint, owner, &payload, now, true);
+    if (status != TTAK_IO_SUCCESS) return status;
+
+    int fd = payload->guard.fd;
+    if (fd < 0) {
+        ttak_shared_net_endpoint_release(endpoint);
+        return TTAK_IO_ERR_INVALID_ARGUMENT;
+    }
+
+    int optval = keepalive ? 1 : 0;
+#if defined(_WIN32)
+    int rc = setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, (const char *)&optval, sizeof(optval));
+#else
+    int rc = setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &optval, sizeof(optval));
+#endif
+
+    ttak_shared_net_endpoint_release(endpoint);
+    return (rc == 0) ? TTAK_IO_SUCCESS : TTAK_IO_ERR_SYS_FAILURE;
+}
+
+

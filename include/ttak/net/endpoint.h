@@ -171,6 +171,23 @@ ttak_io_status_t ttak_net_endpoint_set_reuse(ttak_shared_net_endpoint_t *endpoin
                                              bool reuse_port,
                                              uint64_t now);
 
+/**
+ * @brief Configures SO_RCVBUF and SO_SNDBUF sizes (in bytes). Pass 0 to leave unchanged.
+ */
+ttak_io_status_t ttak_net_endpoint_set_buffer_sizes(ttak_shared_net_endpoint_t *endpoint,
+                                                    ttak_owner_t *owner,
+                                                    int rcvbuf,
+                                                    int sndbuf,
+                                                    uint64_t now);
+
+/**
+ * @brief Configures SO_KEEPALIVE on the endpoint descriptor.
+ */
+ttak_io_status_t ttak_net_endpoint_set_keepalive(ttak_shared_net_endpoint_t *endpoint,
+                                                 ttak_owner_t *owner,
+                                                 bool keepalive,
+                                                 uint64_t now);
+
 #ifdef __cplusplus
 }
 #endif

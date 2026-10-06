@@ -1,3 +1,4 @@
+#undef NDEBUG
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
@@ -39,6 +40,8 @@ int main(void) {
     /* Test socket options */
     assert(ttak_net_endpoint_set_nonblocking(ep1, owner, true, now) == TTAK_IO_SUCCESS);
     assert(ttak_net_endpoint_set_nonblocking(ep2, owner, true, now) == TTAK_IO_SUCCESS);
+    assert(ttak_net_endpoint_set_buffer_sizes(ep1, owner, 32768, 32768, now) == TTAK_IO_SUCCESS);
+    assert(ttak_net_endpoint_set_keepalive(ep1, owner, true, now) == TTAK_IO_SUCCESS);
 
     /* 3. Initialize poller and register ep2 for read events */
     ttak_net_poller_t poller;
