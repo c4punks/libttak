@@ -17,6 +17,7 @@ typedef struct ttak_ringbuf {
     void *buffer;       /**< Internal data buffer. */
     size_t item_size;   /**< Size of each item. */
     size_t capacity;    /**< Maximum number of items. */
+    size_t mask;        /**< Power-of-two mask for fast index wrapping. */
     size_t head;        /**< Write index (where next item goes). */
     size_t tail;        /**< Read index (where next item is taken). */
     bool full;          /**< Flag indicating buffer is full (distinguishes empty vs full). */
