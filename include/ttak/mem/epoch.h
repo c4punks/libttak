@@ -12,7 +12,17 @@ typedef struct ttak_retired_node {
     void *ptr;
     void (*cleanup)(void *);
     struct ttak_retired_node *next;
+    unsigned int epoch; /**< Global epoch when the node was retired. */
 } ttak_retired_node_t;
+
+/**
+ * Epochs a retired node must age before reclamation may free it. A reader
+ * that entered in epoch E may still hold a pointer unlinked and retired
+ * during E, so a node retired in E is freed only once the global epoch has
+ * reached E + TTAK_EPOCH_GRACE (every active reader has then entered after
+ * the node was unlinked).
+ */
+#define TTAK_EPOCH_GRACE 2u
 
 typedef struct {
     unsigned int _Atomic global_epoch;
@@ -93,6 +103,12 @@ void ttak_epoch_retire(void *ptr, void (*cleanup)(void *));
 
 /**
  * @brief Attempts to reclaim memory from safe epochs.
+ *
+ * If no active thread is behind the global epoch, advances it by one and
+ * frees every retired node that is at least TTAK_EPOCH_GRACE epochs old;
+ * younger nodes stay queued for a later call. With no thread inside an
+ * epoch, TTAK_EPOCH_GRACE consecutive calls free everything retired before
+ * the first one.
  */
 void ttak_epoch_reclaim(void);
 

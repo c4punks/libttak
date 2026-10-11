@@ -496,6 +496,7 @@ void ttak_epoch_retire(void *ptr, void (*cleanup)(void *)) {
     node->cleanup = cleanup;
 
     uint32_t gen = TT_ATOMIC_LOAD_U32(&g_epoch_mgr.global_epoch, memory_order_acquire);
+    node->epoch = gen;
     uint32_t tid = t_local_state->logical_tid;
 
     int x, y;
@@ -521,7 +522,11 @@ void ttak_epoch_retire(void *ptr, void (*cleanup)(void *)) {
  * @brief Attempt to reclaim retired nodes if it is safe to advance the epoch.
  *
  * A reclamation is safe if all active threads have local_epoch >= current global_epoch.
- * If safe, the global epoch is incremented and all OLS buckets are drained.
+ * If safe, the global epoch is incremented and every node that has aged
+ * TTAK_EPOCH_GRACE epochs is freed. Younger nodes are pushed back onto their
+ * bucket: a reader that entered in the epoch a node was retired in may still
+ * hold it. (Before the grace period, every queued node was freed as soon as
+ * no reader lagged, including nodes retired in the current epoch.)
  */
 void ttak_epoch_reclaim(void) {
     if (!TT_ATOMIC_LOAD_BOOL(&g_epoch_init_ready, memory_order_seq_cst)) {
@@ -558,21 +563,47 @@ void ttak_epoch_reclaim(void) {
     }
 
     if (safe) {
-        (void)TT_ATOMIC_FETCH_ADD_U32(&g_epoch_mgr.global_epoch, 1, memory_order_acq_rel);
+        uint32_t now = TT_ATOMIC_FETCH_ADD_U32(&g_epoch_mgr.global_epoch, 1, memory_order_acq_rel) + 1;
 
         for (int i = 0; i < OLS_ORDER; i++) {
             for (int j = 0; j < OLS_ORDER; j++) {
-                ttak_retired_node_t *to_free =
-                    (ttak_retired_node_t *)TT_ATOMIC_XCHG_PTR((void * _Atomic *)&g_ols_static_plane.buckets[i][j],
-                                                             NULL, memory_order_acq_rel);
+                ttak_retired_node_t * _Atomic *bucket = &g_ols_static_plane.buckets[i][j];
+                ttak_retired_node_t *list =
+                    (ttak_retired_node_t *)TT_ATOMIC_XCHG_PTR((void * _Atomic *)bucket, NULL,
+                                                             memory_order_acq_rel);
+                ttak_retired_node_t *keep_head = NULL, *keep_tail = NULL;
 
-                while (to_free) {
-                    ttak_retired_node_t *next = to_free->next;
-                    if (to_free->cleanup) {
-                        to_free->cleanup(to_free->ptr);
+                while (list) {
+                    ttak_retired_node_t *next = list->next;
+                    /* Unsigned difference, so a wrapped epoch counter still
+                     * ages correctly. */
+                    if ((uint32_t)(now - list->epoch) >= TTAK_EPOCH_GRACE) {
+                        if (list->cleanup) {
+                            list->cleanup(list->ptr);
+                        }
+                        epoch_node_pool_release(list);
+                    } else {
+                        list->next = keep_head;
+                        keep_head = list;
+                        if (!keep_tail) keep_tail = list;
                     }
-                    epoch_node_pool_release(to_free);
-                    to_free = next;
+                    list = next;
+                }
+
+                /* Splice the young nodes back in front of whatever was
+                 * retired into this bucket meanwhile. */
+                if (keep_head) {
+                    ttak_retired_node_t *old_head;
+                    do {
+                        old_head = (ttak_retired_node_t *)TT_ATOMIC_LOAD_PTR((void * _Atomic *)bucket,
+                                                                             memory_order_acquire);
+                        keep_tail->next = old_head;
+                        void *expected = old_head;
+                        if (TT_ATOMIC_CAS_WEAK_PTR((void * _Atomic *)bucket, &expected, keep_head,
+                                                   memory_order_release, memory_order_acquire)) {
+                            break;
+                        }
+                    } while (1);
                 }
             }
         }
