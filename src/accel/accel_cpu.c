@@ -398,6 +398,14 @@ static bool ttak_factor_number(uint64_t value,
     return ttak_factor_recursive(n, rng, record);
 }
 
+static size_t ttak_accel_record_active_size(const ttak_accel_factor_record_t *record) {
+    size_t used_slots = record->factor_count;
+    if (used_slots > TTAK_ACCEL_FACTOR_MAX) used_slots = TTAK_ACCEL_FACTOR_MAX;
+    return sizeof(record->value) + sizeof(record->factor_count) +
+           sizeof(record->checksum) +
+           used_slots * sizeof(record->slots[0]);
+}
+
 static void ttak_finalize_record(ttak_accel_factor_record_t *record,
                                  uint32_t checksum_seed,
                                  uint32_t ordinal) {
@@ -406,7 +414,9 @@ static void ttak_finalize_record(ttak_accel_factor_record_t *record,
     uint32_t hash = ttak_fnv1a32(&record->value,
                                  sizeof(record->value) + sizeof(record->factor_count) + sizeof(record->reserved),
                                  seed);
-    hash = ttak_fnv1a32(record->slots, sizeof(record->slots), hash);
+    size_t used_slots = record->factor_count;
+    if (used_slots > TTAK_ACCEL_FACTOR_MAX) used_slots = TTAK_ACCEL_FACTOR_MAX;
+    hash = ttak_fnv1a32(record->slots, used_slots * sizeof(record->slots[0]), hash);
     record->checksum = hash;
 }
 
@@ -415,9 +425,15 @@ static ttak_result_t ttak_finalize_output(const ttak_accel_batch_item_t *item,
                                           size_t record_count,
                                           uint32_t checksum_seed) {
     size_t payload_offset = sizeof(ttak_accel_record_prefix_t);
-    size_t payload_size = record_count * sizeof(ttak_accel_factor_record_t);
     uint8_t *payload = item->output + payload_offset;
-    uint32_t payload_checksum = ttak_fnv1a32(payload, payload_size, checksum_seed);
+    uint32_t payload_checksum = checksum_seed;
+    for (size_t i = 0; i < record_count; ++i) {
+        uint8_t *record_bytes = payload + i * sizeof(ttak_accel_factor_record_t);
+        const ttak_accel_factor_record_t *record = (const ttak_accel_factor_record_t *)record_bytes;
+        payload_checksum = ttak_fnv1a32(record_bytes,
+                                        ttak_accel_record_active_size(record),
+                                        payload_checksum);
+    }
 
     ttak_accel_record_prefix_t prefix = {
         .guard = guard,
@@ -426,7 +442,11 @@ static ttak_result_t ttak_finalize_output(const ttak_accel_batch_item_t *item,
         .reserved = sizeof(ttak_accel_factor_record_t)
     };
     memcpy(item->output, &prefix, sizeof(prefix));
-    ttak_mask_payload(payload, payload_size, guard);
+    for (size_t i = 0; i < record_count; ++i) {
+        uint8_t *record_bytes = payload + i * sizeof(ttak_accel_factor_record_t);
+        const ttak_accel_factor_record_t *record = (const ttak_accel_factor_record_t *)record_bytes;
+        ttak_mask_payload(record_bytes, ttak_accel_record_active_size(record), guard);
+    }
     if (item->checksum_out != NULL) {
         *(item->checksum_out) = payload_checksum;
     }
