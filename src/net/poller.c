@@ -13,6 +13,23 @@
 #if defined(_WIN32)
 #include <winsock2.h>
 #define TTAK_NET_USE_EPOLL 0
+
+// Provide ssize_t on Windows toolchains that lack it (e.g. MSVC), matching
+// the guarded typedef already used in src/net/view.c.
+#ifdef __has_include
+#  if __has_include(<basetsd.h>)
+#    include <basetsd.h>
+#  elif __has_include(<BaseTsd.h>)
+#    include <BaseTsd.h>
+#  endif
+#endif
+
+#  if !defined(_SSIZE_T_DEFINED) && !defined(_SSIZE_T_)
+#    include <stddef.h>
+     typedef ptrdiff_t ssize_t;
+#    define _SSIZE_T_DEFINED
+#    define _SSIZE_T_
+#  endif
 #else
 #include <poll.h>
 #include <unistd.h>
