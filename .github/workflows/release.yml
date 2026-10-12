@@ -1,0 +1,435 @@
+name: Release Build
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  # 1. Standard Targets (Linux All-Arch & Win-x64)
+  standard-build:
+    runs-on: ubuntu-latest
+    container:
+      image: debian:trixie-slim
+    steps:
+      - name: Install Git for Checkout
+        run: |
+          apt-get update && apt-get install -y git
+      - uses: actions/checkout@v4
+      - name: Install Toolchains
+        run: |
+          apt-get update && apt-get install -y build-essential make tar \
+          gcc-aarch64-linux-gnu gcc-riscv64-linux-gnu \
+          gcc-powerpc64le-linux-gnu gcc-mips64el-linux-gnuabi64 \
+          gcc-mingw-w64-x86-64
+      - name: Build Standard Targets
+        run: |
+          chmod +x scripts/cross_build_from_debian_13_x64.sh
+          ./scripts/cross_build_from_debian_13_x64.sh --os-only linux
+          ./scripts/cross_build_from_debian_13_x64.sh --os-only windows
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: standard-binaries
+          path: dist/*.tar.gz
+
+  # 1b. Standard Targets with GPU Acceleration (Linux x86_64)
+  standard-build-gpu:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - backend: cuda
+            image: nvidia/cuda:12.8.1-devel-ubuntu24.04
+            make_flags: "USE_CUDA=1"
+          - backend: rocm
+            image: rocm/dev-ubuntu-24.04:6.3.3
+            make_flags: "USE_ROCM=1"
+          - backend: opencl
+            image: debian:trixie-slim
+            make_flags: "USE_OPENCL=1"
+    name: Build linux-amd64-${{ matrix.backend }}
+    container:
+      image: ${{ matrix.image }}
+    steps:
+      - name: Install Git for Checkout
+        run: |
+          apt-get update && apt-get install -y git
+      - uses: actions/checkout@v4
+      - name: Install Build Tools
+        run: |
+          apt-get update && apt-get install -y build-essential make tar
+          if [ "${{ matrix.backend }}" = "opencl" ]; then
+            apt-get install -y ocl-icd-opencl-dev
+          fi
+      - name: Build
+        run: |
+          make clean
+          PERF_STACK_FLAGS="-O3 -march=x86-64 -pipe -flto -ffat-lto-objects \
+            -fomit-frame-pointer -funroll-loops -fstrict-aliasing \
+            -ffunction-sections -fdata-sections -fvisibility=hidden -DNDEBUG" \
+          EXTRA_CFLAGS="-fPIC" \
+          ${{ matrix.make_flags }} make -j$(nproc)
+
+          TAG="libttak-linux-amd64-${{ matrix.backend }}"
+          mkdir -p "dist/${TAG}/include" "dist/${TAG}/lib"
+          cp -r include/* "dist/${TAG}/include/"
+          cp lib/libttak.a "dist/${TAG}/lib/"
+          cd dist && tar -czf "${TAG}.tar.gz" "${TAG}"
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-amd64-${{ matrix.backend }}-binary
+          path: dist/*.tar.gz
+
+  # 1c. Windows x86_64 Targets with GPU Acceleration
+  build-win-amd64-gpu:
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - backend: cuda
+            make_flags: "USE_CUDA=1"
+            artifact_name: windows-amd64-cuda-binary
+          - backend: rocm
+            make_flags: "USE_ROCM=1"
+            artifact_name: windows-amd64-rocm-binary
+          - backend: opencl
+            make_flags: "USE_OPENCL=1"
+            artifact_name: windows-amd64-opencl-binary
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install MinGW Toolchain
+        if: ${{ matrix.backend != 'cuda' }}
+        shell: pwsh
+        run: |
+          choco install -y mingw make
+      - name: Configure Toolchain Path
+        if: ${{ matrix.backend != 'cuda' }}
+        run: |
+          echo "/c/ProgramData/chocolatey/lib/mingw/tools/install/mingw64/bin" >> "$GITHUB_PATH"
+          echo "/c/ProgramData/chocolatey/lib/make/tools/install/bin" >> "$GITHUB_PATH"
+      - name: Enable MSVC Developer Environment
+        if: ${{ matrix.backend == 'cuda' }}
+        uses: ilammy/msvc-dev-cmd@v1
+      - name: Install GNU Make for MSVC build
+        if: ${{ matrix.backend == 'cuda' }}
+        shell: pwsh
+        run: choco install -y make
+      - name: Add Make to PATH (MSVC build)
+        if: ${{ matrix.backend == 'cuda' }}
+        run: |
+          echo "/c/ProgramData/chocolatey/lib/make/tools/install/bin" >> "$GITHUB_PATH"
+      - name: Install CUDA Toolkit
+        if: ${{ matrix.backend == 'cuda' }}
+        uses: Jimver/cuda-toolkit@v0.2.18
+        with:
+          cuda: '12.6.0'
+          method: 'local'
+      - name: Configure CUDA Paths
+        if: ${{ matrix.backend == 'cuda' }}
+        shell: pwsh
+        run: |
+          $cudaRoot = $env:CUDA_PATH
+          if (-not $cudaRoot) {
+            $cudaRoot = (Get-ChildItem "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA" -ErrorAction SilentlyContinue | Sort-Object -Property Name -Descending | Select-Object -First 1).FullName
+          }
+          $cudaBin = Join-Path $cudaRoot "bin"
+          $cudaLib = Join-Path $cudaRoot "lib\x64"
+          $cudaInclude = Join-Path $cudaRoot "include"
+          $cudaBin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          $cudaLib | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          "CUDA_PATH=$cudaRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CUDA_INCLUDE=$cudaInclude" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Create HIP CPU stub headers for ROCm build
+        if: ${{ matrix.backend == 'rocm' }}
+        shell: bash
+        run: |
+          mkdir -p hip-stub/hip
+          cat > hip-stub/hip/hip_runtime.h << 'HIPSTUB'
+          #pragma once
+          /* Minimal HIP CPU stub – allows compilation of HIP sources without ROCm */
+          #include <stdint.h>
+          #include <stdlib.h>
+          #include <string.h>
+          typedef int hipError_t;
+          #define hipSuccess            0
+          #define hipErrorOutOfMemory   2
+          #define hipMemcpyHostToDevice   1
+          #define hipMemcpyDeviceToHost   2
+          #define hipMemcpyDeviceToDevice 3
+          typedef void* hipStream_t;
+          #ifdef __cplusplus
+          struct dim3 {
+              unsigned int x, y, z;
+              dim3(unsigned int x_ = 1, unsigned int y_ = 1, unsigned int z_ = 1)
+                  : x(x_), y(y_), z(z_) {}
+          };
+          /* NOTE: These are compile-time stubs. Real HIP provides per-thread values. */
+          static const dim3 blockIdx(0, 0, 0);
+          static const dim3 threadIdx(0, 0, 0);
+          static const dim3 blockDim(1, 1, 1);
+          static const dim3 gridDim(1, 1, 1);
+          #else
+          typedef struct { unsigned int x, y, z; } dim3;
+          #endif
+          #define __global__
+          #define __device__
+          #define __constant__
+          #define __host__
+          #define __shared__    static
+          #define __launch_bounds__(...)
+          #define __forceinline__ inline
+          static inline hipError_t hipMalloc(void** ptr, size_t size) {
+              *ptr = malloc(size);
+              return *ptr ? hipSuccess : hipErrorOutOfMemory;
+          }
+          static inline hipError_t hipFree(void* ptr) { free(ptr); return hipSuccess; }
+          static inline hipError_t hipMemcpy(void* dst, const void* src, size_t size, int kind) {
+              (void)kind; memcpy(dst, src, size); return hipSuccess;
+          }
+          static inline hipError_t hipMemset(void* ptr, int value, size_t size) {
+              memset(ptr, value, size); return hipSuccess;
+          }
+          static inline hipError_t hipInit(unsigned int flags) {
+              (void)flags; return hipSuccess;
+          }
+          static inline hipError_t hipGetDeviceCount(int* count) {
+              if (count) *count = 0;
+              return hipSuccess;
+          }
+          static inline hipError_t hipDeviceSynchronize(void) { return hipSuccess; }
+          static inline hipError_t hipSetDevice(int device) { (void)device; return hipSuccess; }
+          static inline hipError_t hipGetLastError(void) { return hipSuccess; }
+          #define hipLaunchKernelGGL(kernel, grid, block, sharedMem, stream, ...) \
+              kernel(__VA_ARGS__)
+          HIPSTUB
+          echo "HIPCC=g++" >> "$GITHUB_ENV"
+          echo "HIPCCFLAGS=-std=c++17 -Iinclude -DENABLE_ROCM -Ihip-stub" >> "$GITHUB_ENV"
+          echo "ROCM_PATH=$(pwd)/hip-stub" >> "$GITHUB_ENV"
+      - name: Fetch OpenCL Headers
+        if: ${{ matrix.backend == 'opencl' }}
+        shell: pwsh
+        run: |
+          git clone --depth=1 https://github.com/KhronosGroup/OpenCL-Headers.git opencl-headers
+          $path = (Resolve-Path "opencl-headers").Path -replace '\\', '/'
+          "OPENCL_INCLUDE=$path" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Build
+        run: |
+          set -e
+          make clean
+
+          if [ "${{ matrix.backend }}" = "cuda" ]; then
+            make TOOLCHAIN=msvc USE_CUDA=1 -j$(nproc)
+            LIB_FILE="lib/libttak.lib"
+          else
+            EXTRA_FLAGS="-fPIC -D_WIN32_WINNT=0x0600 -D_GNU_SOURCE"
+            if [ -n "${OPENCL_INCLUDE:-}" ]; then
+              EXTRA_FLAGS="$EXTRA_FLAGS -I${OPENCL_INCLUDE}"
+            fi
+            PERF_STACK_FLAGS="-O3 -march=x86-64 -pipe -flto -ffat-lto-objects \
+              -fomit-frame-pointer -funroll-loops -fstrict-aliasing \
+              -ffunction-sections -fdata-sections -fvisibility=hidden -DNDEBUG" \
+            EXTRA_CFLAGS="$EXTRA_FLAGS" \
+            ${{ matrix.make_flags }} make -j$(nproc)
+            LIB_FILE="lib/libttak.a"
+          fi
+
+          TAG="libttak-windows-amd64-${{ matrix.backend }}"
+          mkdir -p "dist/${TAG}/include" "dist/${TAG}/lib"
+          cp -r include/* "dist/${TAG}/include/"
+          cp "${LIB_FILE}" "dist/${TAG}/lib/"
+          cd dist && tar -czf "${TAG}.tar.gz" "${TAG}"
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: dist/*.tar.gz
+
+  # 2. Windows ARM64 (Manual Build)
+  build-win-arm64:
+    runs-on: ubuntu-latest
+    container:
+      image: dockcross/windows-arm64:latest
+    steps:
+      - name: Install Git for Checkout
+        run: |
+          apt-get update && apt-get install -y git
+      - uses: actions/checkout@v4
+      - name: Manual Build and Package
+        run: |
+          make clean
+          CC=aarch64-w64-mingw32-gcc AR=aarch64-w64-mingw32-ar \
+          PERF_STACK_FLAGS="-O3 -pipe -flto -fomit-frame-pointer -DNDEBUG" \
+          EXTRA_CFLAGS="-fPIC -D_WIN32_WINNT=0x0600 -D_GNU_SOURCE" make -j$(nproc)
+
+          TAG="libttak-windows-arm64"
+          mkdir -p "dist/${TAG}/include" "dist/${TAG}/lib"
+          cp -r include/* "dist/${TAG}/include/"
+          cp lib/libttak.a "dist/${TAG}/lib/"
+          cd dist && tar -czf "${TAG}.tar.gz" "${TAG}"
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: win-arm64-binary
+          path: dist/*.tar.gz
+
+  # 3. macOS (Native Build) – OpenCL always enabled via framework
+  build-macos:
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install OpenCL Headers
+        run: brew install opencl-headers
+      - name: Manual Build and Package
+        run: |
+          make clean
+          OPENCL_INC=$(brew --prefix opencl-headers)/include
+          CC=clang AR=ar \
+          PERF_STACK_FLAGS="-O3 -pipe -flto -fomit-frame-pointer -DNDEBUG" \
+          EXTRA_CFLAGS="-arch ${{ matrix.arch }} -fPIC -D_DARWIN_C_SOURCE -DMAP_HUGETLB=0 -I${OPENCL_INC}" \
+          OPENCL_LIBS="-framework OpenCL" \
+          USE_OPENCL=1 make -j$(sysctl -n hw.ncpu)
+
+          TAG="libttak-darwin-${{ matrix.arch }}"
+          mkdir -p "dist/${TAG}/include" "dist/${TAG}/lib"
+          cp -r include/* "dist/${TAG}/include/"
+          cp lib/libttak.a "dist/${TAG}/lib/"
+          cd dist && tar -czf "${TAG}.tar.gz" "${TAG}"
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-${{ matrix.arch }}-binary
+          path: dist/*.tar.gz
+
+  # 4b. FreeBSD x86_64 GPU Builds (OpenCL only – CUDA/ROCm have no FreeBSD pkg)
+  build-freebsd-amd64-gpu:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - backend: opencl
+            make_flags: "USE_OPENCL=1"
+    name: Build freebsd-amd64-${{ matrix.backend }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build in FreeBSD 15.0 VM
+        uses: cross-platform-actions/action@v0.32.0
+        with:
+          operating_system: freebsd
+          version: '15.0'
+          run: |
+            # IGNORE_OSVERSION=yes lets pkg bootstrap on a brand-new 15.0 snapshot
+            # whose minor version may not yet be in the repository index.
+            sudo env IGNORE_OSVERSION=yes pkg update -f
+            sudo pkg install -y gmake gcc git
+
+            # opencl-headers is not a separate pkg on FreeBSD; clone from Khronos GitHub.
+            git clone --depth=1 https://github.com/KhronosGroup/OpenCL-Headers.git /tmp/opencl-headers
+
+            gmake clean
+            CC=gcc AR=ar \
+            PERF_STACK_FLAGS="-O3 -march=x86-64 -pipe -fomit-frame-pointer -DNDEBUG" \
+            EXTRA_CFLAGS="-fPIC -D__BSD_VISIBLE=1 -DMAP_HUGETLB=0 -I/tmp/opencl-headers" \
+            ${{ matrix.make_flags }} gmake -j$(nproc 2>/dev/null || /sbin/sysctl -n hw.ncpu 2>/dev/null || echo 1)
+
+            TAG="libttak-freebsd-amd64-${{ matrix.backend }}"
+            mkdir -p "dist/${TAG}/include" "dist/${TAG}/lib"
+            cp -r include/* "dist/${TAG}/include/"
+            cp lib/libttak.a "dist/${TAG}/lib/"
+            cd dist && tar -czf "${TAG}.tar.gz" "${TAG}"
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: freebsd-amd64-${{ matrix.backend }}-binary
+          path: dist/*.tar.gz
+
+  # 5. BSD Family: Comprehensive Matrix for 2026 Latest Release & Current
+  build-bsd:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: freebsd
+            version: '15.0'
+          - os: freebsd
+            version: '14.2'
+          - os: freebsd
+            version: '14.1'
+          - os: openbsd
+            version: '7.8'
+          - os: netbsd
+            version: '10.0'
+    name: Build ${{ matrix.os }} (${{ matrix.version }})
+    steps:
+      - uses: actions/checkout@v4
+      - name: Manual Build in VM
+        uses: cross-platform-actions/action@v0.32.0
+        with:
+          operating_system: ${{ matrix.os }}
+          version: ${{ matrix.version }}
+          run: |
+            # Robust package installation with non-interactive flags
+            if [ "${{ matrix.os }}" = "freebsd" ]; then
+              sudo env IGNORE_OSVERSION=yes pkg update -f
+              sudo pkg install -y gmake gcc
+              MAKE_CMD=gmake
+              BSD_CC=gcc
+            elif [ "${{ matrix.os }}" = "openbsd" ]; then
+              sudo pkg_add -v gmake
+              MAKE_CMD=gmake
+              BSD_CC=cc
+            else
+              # NetBSD base system already includes gcc; only install gmake
+              sudo pkgin -y install gmake
+              MAKE_CMD=gmake
+              BSD_CC=gcc
+            fi
+
+            $MAKE_CMD clean
+            # Inject native CC/AR and bypass Linux-only MAP_HUGETLB
+            CC=$BSD_CC AR=ar \
+            PERF_STACK_FLAGS="-O3 -pipe -flto -fomit-frame-pointer -DNDEBUG" \
+            EXTRA_CFLAGS="-fPIC -D__BSD_VISIBLE=1 -DMAP_HUGETLB=0" $MAKE_CMD -j$(nproc 2>/dev/null || /sbin/sysctl -n hw.ncpu 2>/dev/null || echo 1)
+
+            TAG="libttak-${{ matrix.os }}-${{ matrix.version }}-amd64"
+            mkdir -p "dist/${TAG}/include" "dist/${TAG}/lib"
+            cp -r include/* "dist/${TAG}/include/"
+            cp lib/libttak.a "dist/${TAG}/lib/"
+            cd dist && tar -czf "${TAG}.tar.gz" "${TAG}"
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.os }}-${{ matrix.version }}-binary
+          path: dist/*.tar.gz
+
+  # 6. Release Assembly (tag push)
+  release:
+    needs: [standard-build, standard-build-gpu, build-win-amd64-gpu, build-win-arm64, build-macos, build-bsd, build-freebsd-amd64-gpu]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist/
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v1
+        with:
+          name: LibTTAK ${{ github.ref_name }}
+          files: dist/*.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
