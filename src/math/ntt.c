@@ -281,19 +281,18 @@ _Bool ttak_ntt_transform(uint64_t *data, size_t n, const ttak_ntt_prime_t *prime
     bit_reverse(data, n);
     montgomery_array_convert(data, n, prime);
 
-    // Precompute twiddle factors on host to avoid mod_pow inside loops
-    uint64_t *twiddle = malloc(sizeof(uint64_t) * n);
-    if (!twiddle) return false;
+    // Precompute per-stage twiddle factors on host to avoid mod_pow inside
+    // loops. Each stage len needs only `len` entries at stride 1 (a
+    // stage-root power series), so a single n/2-entry staging buffer is
+    // reused across all stages instead of one n-entry table accessed with
+    // stride n/len.
+    size_t stage_cap = (n >= 2) ? (n / 2) : 1;
+    uint64_t *stage_twiddle = malloc(sizeof(uint64_t) * stage_cap);
+    if (!stage_twiddle) return false;
 
     uint64_t root = ttak_mod_pow(prime->primitive_root, (prime->modulus - 1) / n, modulus);
     if (inverse) {
         root = ttak_mod_inverse(root, modulus);
-    }
-    uint64_t root_mont = ttak_montgomery_convert(root, prime);
-    uint64_t curr = ttak_montgomery_convert(1ULL, prime);
-    for (size_t i = 0; i < n; ++i) {
-        twiddle[i] = curr;
-        curr = ttak_montgomery_mul(curr, root_mont, prime);
     }
 
     // Tiled/Hierarchical mixed Lattice NTT structure
@@ -304,12 +303,20 @@ _Bool ttak_ntt_transform(uint64_t *data, size_t n, const ttak_ntt_prime_t *prime
         size_t lattice_shift = ttak_ntt_lattice_shift(lattice_dim);
         size_t lattice_rows = len >> lattice_shift;
 
+        uint64_t stage_root = ttak_mod_pow(root, twiddle_stride, modulus);
+        uint64_t stage_root_mont = ttak_montgomery_convert(stage_root, prime);
+        uint64_t curr = ttak_montgomery_convert(1ULL, prime);
+        for (size_t j = 0; j < len; ++j) {
+            stage_twiddle[j] = curr;
+            curr = ttak_montgomery_mul(curr, stage_root_mont, prime);
+        }
+
         for (size_t i = 0; i < n; i += step) {
             for (size_t row = 0; row < lattice_rows; ++row) {
                 size_t row_base = row << lattice_shift;
                 for (size_t lane = 0; lane < lattice_dim; ++lane) {
                     size_t j = row_base | lane;
-                    uint64_t w = twiddle[j * twiddle_stride];
+                    uint64_t w = stage_twiddle[j];
 
                     uint64_t u = data[i + j];
                     uint64_t v = ttak_montgomery_mul(data[i + j + len], w, prime);
@@ -321,7 +328,7 @@ _Bool ttak_ntt_transform(uint64_t *data, size_t n, const ttak_ntt_prime_t *prime
         }
     }
 
-    free(twiddle);
+    free(stage_twiddle);
 
     if (inverse) {
         uint64_t inv_n = ttak_mod_inverse((uint64_t)n % modulus, modulus);
