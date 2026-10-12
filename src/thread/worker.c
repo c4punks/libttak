@@ -144,7 +144,11 @@ void *ttak_worker_routine(void *arg) {
             task = pref_shard->queue.pop(&pref_shard->queue, now);
             if (!task) {
                 struct timespec ts;
+#ifdef _MSC_VER
+                timespec_get(&ts, TIME_UTC);
+#else
                 clock_gettime(CLOCK_REALTIME, &ts);
+#endif
                 ts.tv_nsec += 10000000L; /* 10ms timeout */
                 if (ts.tv_nsec >= 1000000000L) {
                     ts.tv_sec += 1;
