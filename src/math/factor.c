@@ -398,9 +398,10 @@ int ttak_factor_big(const ttak_bigint_t *n, ttak_prime_factor_big_t **factors_ou
 
     // Handle odd factors
     ttak_bigint_set_u64(&p, 3, now);
-    ttak_bigint_t p_squared;
+    ttak_bigint_t p_squared, four_p;
     ttak_bigint_init(&p_squared, now);
     ttak_bigint_mul(&p_squared, &p, &p, now);
+    ttak_bigint_init(&four_p, now);
 
     size_t trial_steps = 0;
     while (ttak_bigint_cmp(&p_squared, &temp_n) <= 0) {
@@ -413,8 +414,11 @@ int ttak_factor_big(const ttak_bigint_t *n, ttak_prime_factor_big_t **factors_ou
             ttak_bigint_div(&temp_n, NULL, &temp_n, &p, now);
             ttak_bigint_mod(&rem, &temp_n, &p, now);
         }
+        // (p+2)^2 = p^2 + 4p + 4: update incrementally instead of a full square
+        ttak_bigint_mul_u64(&four_p, &p, 4, now);
+        ttak_bigint_add(&p_squared, &p_squared, &four_p, now);
+        ttak_bigint_add_u64(&p_squared, &p_squared, 4, now);
         ttak_bigint_add_u64(&p, &p, 2, now);
-        ttak_bigint_mul(&p_squared, &p, &p, now);
     }
 
     if (ttak_bigint_cmp_u64(&temp_n, 1) > 0) {
@@ -428,6 +432,7 @@ int ttak_factor_big(const ttak_bigint_t *n, ttak_prime_factor_big_t **factors_ou
     ttak_bigint_free(&rem, now);
     ttak_bigint_free(&p, now);
     ttak_bigint_free(&p_squared, now);
+    ttak_bigint_free(&four_p, now);
     return 0;
 
 big_fail:
@@ -449,5 +454,6 @@ cleanup:
     ttak_bigint_free(&rem, now);
     ttak_bigint_free(&p, now);
     ttak_bigint_free(&p_squared, now);
+    ttak_bigint_free(&four_p, now);
     return ret;
 }
