@@ -20,14 +20,14 @@
 #include <ttak/mem/epoch.h>
 #include <ttak/timing/timing.h>
 #include <ttak/priority/scheduler.h>
+#include <stdlib.h>
+#include <time.h>
 #ifdef _WIN32
     #include <windows.h>
 #else
     #include <sys/resource.h>
     #include <unistd.h>
-    #include <time.h>
 #endif
-#include <stdlib.h>
 #if defined(__TINYC__)
 #include <ttak/compat/pthread.h>
 #endif
@@ -144,11 +144,7 @@ void *ttak_worker_routine(void *arg) {
             task = pref_shard->queue.pop(&pref_shard->queue, now);
             if (!task) {
                 struct timespec ts;
-#if defined(_WIN32)
-                timespec_get(&ts, TIME_UTC);
-#else
                 clock_gettime(CLOCK_REALTIME, &ts);
-#endif
                 ts.tv_nsec += 10000000L; /* 10ms timeout */
                 if (ts.tv_nsec >= 1000000000L) {
                     ts.tv_sec += 1;
