@@ -80,8 +80,15 @@ static void ttak_table_rehash(ttak_table_t *table, uint64_t now, size_t new_cap)
     table->tombstones = 0;
 }
 
-void ttak_table_put(ttak_table_t *table, void *key, size_t key_len, void *value, uint64_t now) {
-    if (!table || !table->ctrls) return;
+/**
+ * @brief Single-probe insert core shared by ttak_table_put() and
+ * ttak_table_put_if_absent().
+ *
+ * @param replace When true an existing key has its value replaced; when
+ *                false the table is left untouched on a key match.
+ * @return true if a new slot was occupied, false on an existing-key hit.
+ */
+static bool table_insert(ttak_table_t *table, void *key, size_t key_len, void *value, uint64_t now, bool replace) {
     /* Tombstones degrade probe chains just like live entries, so they count
      * toward the load factor. If live entries alone are under 70% the table
      * is mostly tombstones: rehash at the same capacity to bound memory. */
@@ -98,10 +105,11 @@ void ttak_table_put(ttak_table_t *table, void *key, size_t key_len, void *value,
         if (table->ctrls[idx] == DELETED) {
             if (first_tomb == SIZE_MAX) first_tomb = idx;
         } else if (table->key_cmp(table->entries[idx].key, key) == 0) {
+            if (!replace) return false;
             if (table->val_free && table->entries[idx].value) table->val_free(table->entries[idx].value);
             table->entries[idx].value = value;
             table->entries[idx].key_len = key_len;
-            return;
+            return false;
         }
         idx++;
         if (idx >= table->capacity + MAX_PROBE - 1) idx = 0;
@@ -117,6 +125,17 @@ void ttak_table_put(ttak_table_t *table, void *key, size_t key_len, void *value,
     table->entries[idx].value = value;
     table->entries[idx].key_len = key_len;
     table->size++;
+    return true;
+}
+
+void ttak_table_put(ttak_table_t *table, void *key, size_t key_len, void *value, uint64_t now) {
+    if (!table || !table->ctrls) return;
+    (void)table_insert(table, key, key_len, value, now, true);
+}
+
+bool ttak_table_put_if_absent(ttak_table_t *table, void *key, size_t key_len, void *value, uint64_t now) {
+    if (!table || !table->ctrls) return false;
+    return table_insert(table, key, key_len, value, now, false);
 }
 
 void *ttak_table_get(ttak_table_t *table, const void *key, size_t key_len, uint64_t now) {
