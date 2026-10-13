@@ -1,4 +1,5 @@
 #include <ttak/container/set.h>
+#include "../../internal/ttak/table_internal.h"
 #include <stddef.h>
 
 /**
@@ -22,7 +23,8 @@ void ttak_set_init(ttak_set_t *set, size_t capacity,
  * @brief Insert a key into the set.
  *
  * Stores a placeholder value so lookups can distinguish between "missing" and
- * "present with NULL value".
+ * "present with NULL value". Duplicate adds are no-ops resolved with a single
+ * hash-table probe.
  *
  * @param set     Set to update.
  * @param key     Key to store.
@@ -31,9 +33,7 @@ void ttak_set_init(ttak_set_t *set, size_t capacity,
  */
 void ttak_set_add(ttak_set_t *set, void *key, size_t key_len, uint64_t now) {
     if (!set) return;
-    if (ttak_table_get(&set->table, key, key_len, now) != NULL) {
-        ttak_table_put(&set->table, key, key_len, (void*)1, now);
-    }
+    ttak_table_put_if_absent(&set->table, key, key_len, (void*)1, now);
 }
 
 /**
