@@ -34,7 +34,8 @@
 #    define ttak_get_tick_count_ns() ({ \
         uint64_t __scale = g_tsc_scale; \
         if (TTAK_UNLIKELY(__scale == 0)) { calibrate_tsc(); __scale = g_tsc_scale; if (__scale == 0) __scale = (1ULL << 32) / 2; } \
-        (ttak_arch_rdtsc() * __scale) >> 32; \
+        uint64_t __tsc = ttak_arch_rdtsc(); \
+        ((__tsc >> 32) * __scale + (((__tsc & 0xFFFFFFFFULL) * __scale) >> 32)); \
     })
 
 #    define ttak_get_tick_count() (ttak_get_tick_count_ns() / 1000000ULL)
@@ -67,7 +68,8 @@ TTAK_FORCE_INLINE uint64_t ttak_get_tick_count_ns(void) {
         scale = g_tsc_scale;
         if (scale == 0) scale = (1ULL << 32) / 2; 
     }
-    return (ttak_arch_rdtsc() * scale) >> 32;
+    uint64_t tsc = ttak_arch_rdtsc();
+    return (tsc >> 32) * scale + (((tsc & 0xFFFFFFFFULL) * scale) >> 32);
 #elif defined(_WIN32)
     extern uint64_t ttak_get_tick_count_ns_win32(void);
     return ttak_get_tick_count_ns_win32();
