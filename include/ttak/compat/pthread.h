@@ -19,7 +19,9 @@
  *
  * Bare-metal builds (TTAK_PLATFORM_BAREMETAL=1) reuse the same
  * single-threaded stubs. newlib ships a <pthread.h> that declares nothing
- * without _POSIX_THREADS, so include_next is skipped there.
+ * without _POSIX_THREADS, so include_next is skipped there. FreeRTOS builds
+ * (TTAK_PLATFORM_FREERTOS=1) keep the bare-metal types but link real
+ * implementations from src/platform/freertos.c.
  */
 
 #include <ttak/compat/baremetal.h>
@@ -105,9 +107,9 @@ typedef unsigned pthread_key_t;
 #  define TTAK_PTHREAD_STUB_RW(rw)     (*(rw))
 #else
 typedef int pthread_rwlockattr_t;
-typedef struct { int exclusive; } pthread_rwlock_t;
+typedef struct { uintptr_t state; } pthread_rwlock_t;
 #  define PTHREAD_RWLOCK_INITIALIZER   { 0 }
-#  define TTAK_PTHREAD_STUB_RW(rw)     ((rw)->exclusive)
+#  define TTAK_PTHREAD_STUB_RW(rw)     ((rw)->state)
 #endif
 
 #define PTHREAD_MUTEX_INITIALIZER 0
@@ -116,6 +118,52 @@ typedef struct { int exclusive; } pthread_rwlock_t;
 #ifndef TTAK_PTHREAD_STUB_KEYS_MAX
 #define TTAK_PTHREAD_STUB_KEYS_MAX 16
 #endif
+
+#if TTAK_PLATFORM_FREERTOS
+/* FreeRTOS backend (src/platform/freertos.c). Mutex, cond and rwlock words
+ * hold lazily created kernel objects, so the zero initialisers above stay
+ * valid; pthread_t is a handle to a heap-allocated thread record. */
+#ifdef __cplusplus
+extern "C" {
+#endif
+int pthread_mutex_init(pthread_mutex_t *m, const pthread_mutexattr_t *attr);
+int pthread_mutex_lock(pthread_mutex_t *m);
+int pthread_mutex_trylock(pthread_mutex_t *m);
+int pthread_mutex_unlock(pthread_mutex_t *m);
+int pthread_mutex_destroy(pthread_mutex_t *m);
+int pthread_attr_init(pthread_attr_t *attr);
+int pthread_attr_destroy(pthread_attr_t *attr);
+int pthread_attr_setstacksize(pthread_attr_t *attr, size_t stacksize);
+int pthread_attr_getstacksize(const pthread_attr_t *attr, size_t *stacksize);
+int pthread_cond_init(pthread_cond_t *c, const pthread_condattr_t *attr);
+int pthread_cond_wait(pthread_cond_t *c, pthread_mutex_t *m);
+int pthread_cond_timedwait(pthread_cond_t *c, pthread_mutex_t *m,
+                           const struct timespec *abstime);
+int pthread_cond_signal(pthread_cond_t *c);
+int pthread_cond_broadcast(pthread_cond_t *c);
+int pthread_cond_destroy(pthread_cond_t *c);
+int pthread_rwlock_init(pthread_rwlock_t *rw, const pthread_rwlockattr_t *attr);
+int pthread_rwlock_rdlock(pthread_rwlock_t *rw);
+int pthread_rwlock_wrlock(pthread_rwlock_t *rw);
+int pthread_rwlock_unlock(pthread_rwlock_t *rw);
+int pthread_rwlock_destroy(pthread_rwlock_t *rw);
+int pthread_rwlockattr_init(pthread_rwlockattr_t *a);
+int pthread_rwlockattr_destroy(pthread_rwlockattr_t *a);
+int pthread_rwlockattr_setkind_np(pthread_rwlockattr_t *a, int pref);
+int pthread_once(pthread_once_t *once_ctrl, void (*init_routine)(void));
+int pthread_create(pthread_t *thread, const void *attr,
+                   void *(*start_routine)(void *), void *arg);
+int pthread_join(pthread_t thread, void **retval);
+int pthread_detach(pthread_t thread);
+pthread_t pthread_self(void);
+int pthread_key_create(pthread_key_t *key, void (*destructor)(void *));
+int pthread_key_delete(pthread_key_t key);
+void *pthread_getspecific(pthread_key_t key);
+int pthread_setspecific(pthread_key_t key, const void *value);
+#ifdef __cplusplus
+}
+#endif
+#else /* !TTAK_PLATFORM_FREERTOS */
 
 static __inline int pthread_mutex_init(pthread_mutex_t *m,
                                         const pthread_mutexattr_t *attr) {
@@ -264,6 +312,8 @@ static __inline int pthread_setspecific(pthread_key_t key, const void *value) {
     ttak_pthread_stub_key_slots()[key] = (void *)value;
     return 0;
 }
+
+#endif /* TTAK_PLATFORM_FREERTOS */
 
 #endif /* (__wasi__ && !__TTAK_PTHREAD_SYSTEM) || TTAK_PLATFORM_BAREMETAL */
 
