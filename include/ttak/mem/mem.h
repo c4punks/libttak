@@ -37,6 +37,7 @@
 #endif
 #include <ttak/mem/epoch_gc.h>
 #include <ttak/types/ttak_compiler.h>
+#include <ttak/compat/baremetal.h>
 #include <stdalign.h>
 #include <ttak/compat/pthread.h>
 
@@ -86,14 +87,32 @@ typedef enum {
 #define SAFE_NULL NULL
 
 /**
+ * @brief Alignment of ttak_mem_header_t, and so of every pointer
+ * ttak_mem_alloc() returns.
+ *
+ * Hosted builds use 64 to keep headers off shared cache lines. Bare-metal
+ * builds use 8 (the AAPCS maximum): 64 would pad each header to 128 bytes,
+ * which on a few hundred KiB of SRAM costs more than it saves. Define it
+ * to 32 if payloads must sit on Cortex-M7 cache lines, e.g. for DMA.
+ */
+#ifndef TTAK_MEM_HEADER_ALIGN
+#  if TTAK_PLATFORM_BAREMETAL
+#    define TTAK_MEM_HEADER_ALIGN 8
+#  else
+#    define TTAK_MEM_HEADER_ALIGN 64
+#  endif
+#endif
+
+/**
  * @struct ttak_mem_header_t
  * @brief "Fortress" Memory Header stored before user data.
  *
- * 64-byte aligned to prevent False Sharing and ensure user pointer alignment.
- * The structure is padded to maintain alignment for the following user data.
+ * Aligned to TTAK_MEM_HEADER_ALIGN to prevent false sharing and ensure user
+ * pointer alignment. The structure is padded to maintain alignment for the
+ * following user data.
  */
 typedef struct ttak_mem_header_t {
-    alignas(64) uint32_t magic;         /**< 0x5454414B */
+    alignas(TTAK_MEM_HEADER_ALIGN) uint32_t magic; /**< 0x5454414B */
     uint32_t checksum;                  /**< Metadata checksum to detect header corruption */
     uint64_t created_tick;              /**< Creation timestamp in ticks */
     uint64_t expires_tick;              /**< Expiration timestamp in ticks */

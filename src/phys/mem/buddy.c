@@ -1,4 +1,5 @@
 #include <ttak/phys/mem/buddy.h>
+#include <ttak/mem/mem.h>
 #include <ttak/types/ttak_compiler.h>
 
 #include <stdalign.h>
@@ -39,8 +40,9 @@ typedef struct ttak_buddy_segment {
     uint8_t owns_buffer;
 } ttak_buddy_segment_t;
 
+/* Payloads follow this header, so it carries the ttak_mem header's alignment. */
 typedef struct ttak_buddy_block {
-    _Alignas(64) struct ttak_buddy_block *next;
+    _Alignas(TTAK_MEM_HEADER_ALIGN) struct ttak_buddy_block *next;
     ttak_buddy_segment_t *segment;
     uint32_t owner_tag;
     uint32_t call_safety;

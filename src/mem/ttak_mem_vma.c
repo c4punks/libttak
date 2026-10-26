@@ -73,8 +73,9 @@ static int size_to_bin(size_t sz) {
     return TTAK_BIN_COUNT - 1;
 }
 
+/* Bytes from a region block to the ttak_mem_header_t it carries. */
 static inline size_t payload_offset(void) {
-    size_t off = sizeof(ttak_mem_header_t);
+    size_t off = sizeof(ttak_region_block_t);
     return (off + TTAK_VMA_ALIGNMENT - 1) & ~((size_t)TTAK_VMA_ALIGNMENT - 1);
 }
 
