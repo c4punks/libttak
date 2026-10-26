@@ -1,4 +1,5 @@
 #include <ttak/stats/stats.h>
+#include <inttypes.h>
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
@@ -100,7 +101,7 @@ double ttak_stats_mean(ttak_stats_t *s) {
  */
 void ttak_stats_print_ascii(ttak_stats_t *s) {
     ttak_spin_lock(&s->lock);
-    printf("Stats: Count=%lu, Min=%lu, Max=%lu, Mean=%.2f\n", 
+    printf("Stats: Count=%" PRIu64 ", Min=%" PRIu64 ", Max=%" PRIu64 ", Mean=%.2f\n", 
            s->count, s->min, s->max, (s->count > 0) ? (double)s->sum / s->count : 0.0);
     printf("Histogram:\n");
     
@@ -114,7 +115,7 @@ void ttak_stats_print_ascii(ttak_stats_t *s) {
     for (int i = 0; i < TTAK_STATS_HIST_BUCKETS; i++) {
         uint64_t lower = s->hist_min + i * s->hist_step;
         uint64_t upper = lower + s->hist_step;
-        printf("[%4lu-%4lu] ", lower, upper); 
+        printf("[%4" PRIu64 "-%4" PRIu64 "] ", lower, upper); 
         
         int bars = 0;
         if (max_count > 0) {
@@ -122,7 +123,7 @@ void ttak_stats_print_ascii(ttak_stats_t *s) {
         }
         
         for (int j = 0; j < bars; j++) printf("#");
-        printf(" (%lu)\n", s->histogram[i]);
+        printf(" (%" PRIu64 ")\n", s->histogram[i]);
     }
     ttak_spin_unlock(&s->lock);
 }

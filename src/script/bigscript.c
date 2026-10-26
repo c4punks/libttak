@@ -274,10 +274,11 @@ ttak_bigscript_vm_t *ttak_bigscript_vm_create(const ttak_bigscript_limits_t *lim
     ttak_bigscript_vm_t *vm = (ttak_bigscript_vm_t*)ttak_mem_alloc_raw(sizeof(ttak_bigscript_vm_t), __TTAK_UNSAFE_MEM_FOREVER__, now);
     if (!vm) { return NULL; }
     memset(vm, 0, sizeof(ttak_bigscript_vm_t)); if (limits) { vm->limits = *limits; }
-    vm->stack_cap = 1024; vm->stack = (ttak_bigscript_variant_t*)ttak_mem_alloc_raw(sizeof(ttak_bigscript_variant_t) * 1024, __TTAK_UNSAFE_MEM_FOREVER__, now);
-    for (uint32_t i = 0; i < 1024; i++) { variant_init(&vm->stack[i], now); }
-    vm->locals_cap = 1024; vm->locals = (ttak_bigscript_variant_t*)ttak_mem_alloc_raw(sizeof(ttak_bigscript_variant_t) * 1024, __TTAK_UNSAFE_MEM_FOREVER__, now);
-    for (uint32_t i = 0; i < 1024; i++) { variant_init(&vm->locals[i], now); }
+    vm->stack = (ttak_bigscript_variant_t*)ttak_mem_alloc_raw(sizeof(ttak_bigscript_variant_t) * 1024, __TTAK_UNSAFE_MEM_FOREVER__, now);
+    vm->locals = (ttak_bigscript_variant_t*)ttak_mem_alloc_raw(sizeof(ttak_bigscript_variant_t) * 1024, __TTAK_UNSAFE_MEM_FOREVER__, now);
+    if (!vm->stack || !vm->locals) { ttak_mem_free(vm->stack); ttak_mem_free(vm->locals); ttak_mem_free(vm); return NULL; }
+    vm->stack_cap = 1024; for (uint32_t i = 0; i < 1024; i++) { variant_init(&vm->stack[i], now); }
+    vm->locals_cap = 1024; for (uint32_t i = 0; i < 1024; i++) { variant_init(&vm->locals[i], now); }
     return vm;
 }
 
