@@ -1,6 +1,5 @@
 #include <ttak/phys/mem/buddy.h>
 #include <ttak/types/ttak_compiler.h>
-#include <ttak/mem/epoch.h>
 
 #include <stdalign.h>
 #include <ttak/compat/stdatomic.h>
@@ -24,8 +23,6 @@
 
 #define TTAK_BUDDY_MIN_ORDER   6U   /* 64 bytes */
 #define TTAK_BUDDY_MAX_ORDER   60U  /* 2^60 bytes (~1 EB) */
-#define TTAK_BUDDY_TIER1_MAX_ORDER 9U    /* < 1 KB */
-#define TTAK_BUDDY_TIER2_MAX_ORDER 22U   /* < 4 MB */
 #define TTAK_BUDDY_MAX_SEGMENTS 32U
 #define TTAK_BUDDY_GROWTH_THRESHOLD 80U
 #define TTAK_BUDDY_MIN_GROWTH_BYTES (1ULL << 20)
@@ -64,10 +61,11 @@ typedef struct ttak_buddy_zone {
 } ttak_buddy_zone_t;
 
 static ttak_buddy_zone_t g_zone;
-static atomic_flag g_tier1_lock = ATOMIC_FLAG_INIT;
-static pthread_mutex_t g_tier2_lock = PTHREAD_MUTEX_INITIALIZER;
-static pthread_rwlock_t g_tier3_lock = PTHREAD_RWLOCK_INITIALIZER;
-static pthread_mutex_t g_tier4_lock = PTHREAD_MUTEX_INITIALIZER;
+/* One lock for every free-list and block-header change. Splitting a block
+ * and coalescing its buddy both touch two orders at once; with per-order
+ * locks a free could merge a buddy that another thread was still
+ * splitting, handing the same memory out twice. */
+static pthread_mutex_t g_buddy_lock = PTHREAD_MUTEX_INITIALIZER;
 /* Free-list bitmask: one residue bit per buddy order. */
 static _Atomic uint64_t g_free_mask = 0;
 
@@ -108,83 +106,12 @@ static inline uint8_t ttak_buddy_msb64(uint64_t value) {
 #endif
 }
 
-static inline void buddy_lock_tier1(void) {
-    while (atomic_flag_test_and_set_explicit(&g_tier1_lock, memory_order_acquire)) {
-    }
+static inline void buddy_lock(void) {
+    pthread_mutex_lock(&g_buddy_lock);
 }
 
-static inline void buddy_unlock_tier1(void) {
-    atomic_flag_clear_explicit(&g_tier1_lock, memory_order_release);
-}
-
-static inline void buddy_lock_tier2(void) {
-    pthread_mutex_lock(&g_tier2_lock);
-}
-
-static inline void buddy_unlock_tier2(void) {
-    pthread_mutex_unlock(&g_tier2_lock);
-}
-
-static inline void buddy_lock_tier3(bool writer) {
-    if (writer) {
-        pthread_rwlock_wrlock(&g_tier3_lock);
-    } else {
-        pthread_rwlock_rdlock(&g_tier3_lock);
-    }
-}
-
-static inline void buddy_unlock_tier3(bool writer) {
-    (void)writer;
-    pthread_rwlock_unlock(&g_tier3_lock);
-}
-
-/* Tier 4: low-priority gate for GC/defrag so workers never spin on it. */
-static inline void buddy_lock_background(void) {
-    pthread_mutex_lock(&g_tier4_lock);
-}
-
-static inline void buddy_unlock_background(void) {
-    pthread_mutex_unlock(&g_tier4_lock);
-}
-
-static inline uint8_t buddy_order_tier(uint8_t order) {
-    if (order <= TTAK_BUDDY_TIER1_MAX_ORDER) {
-        return 1U;
-    }
-    if (order <= TTAK_BUDDY_TIER2_MAX_ORDER) {
-        return 2U;
-    }
-    return 3U;
-}
-
-static inline void buddy_lock_for_order(uint8_t order, bool writer) {
-    switch (buddy_order_tier(order)) {
-        case 1: buddy_lock_tier1(); break;
-        case 2: buddy_lock_tier2(); break;
-        default: buddy_lock_tier3(writer); break;
-    }
-}
-
-static inline void buddy_unlock_for_order(uint8_t order, bool writer) {
-    switch (buddy_order_tier(order)) {
-        case 1: buddy_unlock_tier1(); break;
-        case 2: buddy_unlock_tier2(); break;
-        default: buddy_unlock_tier3(writer); break;
-    }
-}
-
-static inline void buddy_lock_all(void) {
-    buddy_lock_background();
-    buddy_lock_tier1();
-    buddy_lock_tier2();
-    buddy_lock_tier3(true);
-}
-
-static inline void buddy_unlock_all(void) {
-    buddy_unlock_tier3(true);
-    buddy_unlock_tier2();
-    buddy_unlock_tier1();
-    buddy_unlock_background();
+static inline void buddy_unlock(void) {
+    pthread_mutex_unlock(&g_buddy_lock);
 }
 
 static inline void buddy_account_alloc(uint8_t order) {
@@ -393,12 +320,12 @@ static bool buddy_expand_zone(size_t min_bytes) {
 
     bool added = false;
     uint8_t new_segment_count = 0;
-    buddy_lock_all();
+    buddy_lock();
     if (g_zone.segment_count < TTAK_BUDDY_MAX_SEGMENTS) {
         added = buddy_add_segment_locked(buffer, aligned, 1U);
         new_segment_count = g_zone.segment_count;
     }
-    buddy_unlock_all();
+    buddy_unlock();
 
     if (!added) {
         buddy_heap_free(buffer);
@@ -509,10 +436,9 @@ static void list_remove(uint8_t order, ttak_buddy_block_t *target) {
     }
 }
 
-static void buddy_defragment(void) {
-    buddy_lock_background();
+/* Caller holds g_buddy_lock. */
+static void buddy_defragment_locked(void) {
     for (uint8_t order = TTAK_BUDDY_MIN_ORDER; order < g_zone.max_order; ++order) {
-        buddy_lock_for_order(order, true);
         ttak_buddy_block_t *block = g_zone.free_lists[order];
         while (block) {
             ttak_buddy_block_t *next = block->next;
@@ -520,26 +446,20 @@ static void buddy_defragment(void) {
             if (pair && !pair->in_use && pair->order == order) {
                 list_remove(order, block);
                 list_remove(order, pair);
-                buddy_unlock_for_order(order, true);
                 ttak_buddy_block_t *merged =
                     (block_offset(block) < block_offset(pair)) ? block : pair;
                 merged->order = order + 1;
-                buddy_lock_for_order(order + 1, true);
                 list_push(order + 1, merged);
-                buddy_unlock_for_order(order + 1, true);
-                buddy_lock_for_order(order, true);
                 block = g_zone.free_lists[order];
                 continue;
             }
             block = next;
         }
-        buddy_unlock_for_order(order, true);
     }
-    buddy_unlock_background();
 }
 
 void ttak_mem_buddy_init(void *pool_start, size_t pool_len, int embedded_mode) {
-    buddy_lock_all();
+    buddy_lock();
     buddy_release_owned_segments_locked();
     atomic_store_explicit(&g_free_mask, 0, memory_order_relaxed);
     memset(&g_zone, 0, sizeof(g_zone));
@@ -555,14 +475,15 @@ void ttak_mem_buddy_init(void *pool_start, size_t pool_len, int embedded_mode) {
         fprintf(stderr, "[Buddy] Initialized pool_len=%zu embedded_mode=%u segments=%u\n",
                 cap, g_zone.embedded_mode, g_zone.segment_count);
     }
-    buddy_unlock_all();
+    buddy_unlock();
 }
 
 void ttak_mem_buddy_set_pool(void *pool_start, size_t pool_len) {
     ttak_mem_buddy_init(pool_start, pool_len, g_zone.embedded_mode);
 }
 
-/* Residue lookup for size-class selection to reduce fragmentation. */
+/* Residue lookup for size-class selection to reduce fragmentation.
+ * Caller holds g_buddy_lock. */
 static ttak_buddy_block_t *select_block(uint8_t desired, ttak_priority_t priority) {
     if (desired > g_zone.max_order) {
         return NULL;
@@ -584,17 +505,15 @@ static ttak_buddy_block_t *select_block(uint8_t desired, ttak_priority_t priorit
         uint8_t order = (priority == TTAK_PRIORITY_WORST_FIT)
                             ? ttak_buddy_msb64(mask)
                             : ttak_buddy_ctz64(mask);
-        buddy_lock_for_order(order, true);
         ttak_buddy_block_t *block = list_pop_head(order);
         if (block) {
-            buddy_unlock_for_order(order, true);
             return block;
         }
-        buddy_unlock_for_order(order, true);
         mark_order_empty(order);
     }
 }
 
+/* Caller holds g_buddy_lock. */
 static void split_block(uint8_t target_order, ttak_buddy_block_t *block) {
     while (block->order > target_order) {
         uint8_t new_order = block->order - 1;
@@ -607,12 +526,28 @@ static void split_block(uint8_t target_order, ttak_buddy_block_t *block) {
         buddy->call_safety = 0;
         buddy->order = new_order;
         buddy->next = NULL;
-        buddy_lock_for_order(new_order, true);
         list_push(new_order, buddy);
-        buddy_unlock_for_order(new_order, true);
         block->order = new_order;
     }
     block->in_use = 1;
+}
+
+/* Pops, splits and accounts a block of @p order, or returns NULL. */
+static ttak_buddy_block_t *buddy_take_block(uint8_t order, const ttak_mem_req_t *req) {
+    buddy_lock();
+    ttak_buddy_block_t *block = select_block(order, req->priority);
+    if (!block) {
+        buddy_defragment_locked();
+        block = select_block(order, req->priority);
+    }
+    if (block) {
+        split_block(order, block);
+        buddy_account_alloc(block->order);
+        block->owner_tag = req->owner_tag;
+        block->call_safety = req->call_safety;
+    }
+    buddy_unlock();
+    return block;
 }
 
 void *ttak_mem_buddy_alloc(const ttak_mem_req_t *req) {
@@ -649,20 +584,11 @@ void *ttak_mem_buddy_alloc(const ttak_mem_req_t *req) {
         buddy_expand_zone(block_bytes);
     }
 
-    ttak_buddy_block_t *block = select_block(order, req->priority);
-    if (!block && !g_zone.embedded_mode) {
-        if (buddy_expand_zone(block_bytes)) {
-            block = select_block(order, req->priority);
-        }
-    }
-    if (!block) {
-        buddy_defragment();
-        block = select_block(order, req->priority);
-    }
+    ttak_buddy_block_t *block = buddy_take_block(order, req);
     if (!block && !g_zone.embedded_mode) {
         /* Hit capacity: grow silently instead of surfacing ENOMEM immediately. */
         if (buddy_expand_zone(block_bytes)) {
-            block = select_block(order, req->priority);
+            block = buddy_take_block(order, req);
         }
     }
     if (!block) {
@@ -670,43 +596,41 @@ void *ttak_mem_buddy_alloc(const ttak_mem_req_t *req) {
                 needed, order, buddy_capacity(), g_zone.max_order);
         return NULL;
     }
-    split_block(order, block);
-    buddy_account_alloc(block->order);
-    block->owner_tag = req->owner_tag;
-    block->call_safety = req->call_safety;
     return (void *)(block + 1);
 }
 
 static void ttak_buddy_cleanup(void *ptr) {
     if (!ptr) return;
     ttak_buddy_block_t *block = (ttak_buddy_block_t *)ptr;
+    buddy_lock();
     buddy_account_free(block->order);
     while (true) {
         uint8_t order = block->order;
-        buddy_lock_for_order(order, true);
         block->in_use = 0;
         if (order >= g_zone.max_order) {
             list_push(order, block);
-            buddy_unlock_for_order(order, true);
             break;
         }
         ttak_buddy_block_t *pair = buddy_pair(block, order);
         if (!pair || pair->in_use || pair->order != order) {
             list_push(order, block);
-            buddy_unlock_for_order(order, true);
             break;
         }
         list_remove(order, pair);
-        buddy_unlock_for_order(order, true);
         block = (block_offset(block) < block_offset(pair)) ? block : pair;
         block->order = order + 1U;
     }
+    buddy_unlock();
 }
 
+/* Frees immediately, like free() behind ttak_dangerous_free() on hosted
+ * builds. Deferring through ttak_epoch_retire() held every block until
+ * someone called ttak_epoch_reclaim(), which nothing does on bare metal, and
+ * cost a pool block per retire node. */
 void ttak_mem_buddy_free(void *ptr) {
     if (!ptr) return;
     ttak_buddy_block_t *block = ((ttak_buddy_block_t *)ptr) - 1;
     block->owner_tag = 0;
     block->call_safety = 0;
-    ttak_epoch_retire(block, ttak_buddy_cleanup);
+    ttak_buddy_cleanup(block);
 }
