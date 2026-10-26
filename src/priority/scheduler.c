@@ -23,10 +23,22 @@
  * Sharded history storage
  * ----------------------------------------------------------------------- */
 
+/* History is keyed by task hash, i.e. by (func, arg). Callers that pass a
+ * fresh arg per task would grow the map without bound, so each shard stops
+ * learning new hashes at this many entries; known hashes keep updating. */
+#ifndef TTAK_SCHED_HISTORY_MAX_PER_SHARD
+#  if defined(TTAK_PLATFORM_BAREMETAL) && TTAK_PLATFORM_BAREMETAL
+#    define TTAK_SCHED_HISTORY_MAX_PER_SHARD 32
+#  else
+#    define TTAK_SCHED_HISTORY_MAX_PER_SHARD 4096
+#  endif
+#endif
+
 /** One independent segment of the execution-history map. */
 typedef struct {
     tt_map_t       *map;
     pthread_mutex_t lock;
+    size_t          entries;
     _Bool           initialized;
 } ttak_sched_history_shard_t;
 
@@ -83,8 +95,9 @@ void ttak_scheduler_record_execution(ttak_task_t *task, uint64_t duration_ms) {
     if (ttak_map_get_key(shard->map, (uintptr_t)hash, &old_avg, now)) {
         size_t new_avg = (size_t)((old_avg * 0.7) + (duration_ms * 0.3));
         ttak_insert_to_map(shard->map, (uintptr_t)hash, new_avg, now);
-    } else {
+    } else if (shard->entries < TTAK_SCHED_HISTORY_MAX_PER_SHARD) {
         ttak_insert_to_map(shard->map, (uintptr_t)hash, (size_t)duration_ms, now);
+        shard->entries++;
     }
     pthread_mutex_unlock(&shard->lock);
 }
