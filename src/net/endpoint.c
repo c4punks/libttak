@@ -19,6 +19,8 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #pragma comment(lib, "ws2_32.lib")
+#elif TTAK_NET_LWIP
+#include "../../internal/ttak/net_lwip.h"
 #else
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -350,6 +352,9 @@ ttak_io_status_t ttak_net_endpoint_set_nonblocking(ttak_shared_net_endpoint_t *e
 #if defined(_WIN32)
     u_long mode = nonblocking ? 1 : 0;
     int rc = ioctlsocket(fd, FIONBIO, &mode);
+#elif TTAK_NET_LWIP
+    int mode = nonblocking ? 1 : 0;
+    int rc = ioctlsocket(fd, FIONBIO, &mode);
 #else
     int flags = fcntl(fd, F_GETFL, 0);
     if (flags < 0) {
@@ -418,7 +423,7 @@ ttak_io_status_t ttak_net_endpoint_set_reuse(ttak_shared_net_endpoint_t *endpoin
     (void)reuse_port;
 #else
     int rc = setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
-#if defined(SO_REUSEPORT)
+#if defined(SO_REUSEPORT) && !TTAK_NET_LWIP /* lwIP defines it but rejects it */
     if (rc == 0 && reuse_port) {
         int val_port = 1;
         rc = setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &val_port, sizeof(val_port));
@@ -455,6 +460,11 @@ ttak_io_status_t ttak_net_endpoint_set_buffer_sizes(ttak_shared_net_endpoint_t *
         rc = setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof(rcvbuf));
 #endif
     }
+#if TTAK_NET_LWIP
+    /* lwIP fixes the send buffer at build time (TCP_SND_BUF) and rejects
+     * SO_SNDBUF. */
+    (void)sndbuf;
+#else
     if (rc == 0 && sndbuf > 0) {
 #if defined(_WIN32)
         rc = setsockopt(fd, SOL_SOCKET, SO_SNDBUF, (const char *)&sndbuf, sizeof(sndbuf));
@@ -462,6 +472,7 @@ ttak_io_status_t ttak_net_endpoint_set_buffer_sizes(ttak_shared_net_endpoint_t *
         rc = setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf));
 #endif
     }
+#endif
 
     ttak_shared_net_endpoint_release(endpoint);
     return (rc == 0) ? TTAK_IO_SUCCESS : TTAK_IO_ERR_SYS_FAILURE;

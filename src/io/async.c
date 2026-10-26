@@ -16,6 +16,8 @@
 
 #ifdef _WIN32
 #include <winsock2.h>
+#elif TTAK_NET_LWIP
+#include "../../internal/ttak/net_lwip.h"
 #else
 #include <poll.h>
 #endif

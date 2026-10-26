@@ -44,6 +44,15 @@
 #error "TTAK_PLATFORM_FREERTOS=1 also requires TTAK_PLATFORM_BAREMETAL=1"
 #endif
 
+/* The socket and I/O modules on lwIP's BSD socket API. Its sockets need
+ * lwIP's tcpip thread, so this needs FreeRTOS. */
+#ifndef TTAK_NET_LWIP
+#define TTAK_NET_LWIP 0
+#endif
+#if TTAK_NET_LWIP && !TTAK_PLATFORM_FREERTOS
+#error "TTAK_NET_LWIP=1 requires TTAK_PLATFORM_FREERTOS=1"
+#endif
+
 #if TTAK_PLATFORM_BAREMETAL
 
 #include <stdint.h>

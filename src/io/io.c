@@ -21,6 +21,9 @@
 #include <io.h>
 #include <winsock2.h>
 #define ttak_io_close_handle _close
+#elif TTAK_NET_LWIP
+#include "../../internal/ttak/net_lwip.h"
+#define ttak_io_close_handle close
 #else
 #include <poll.h>
 #include <unistd.h>

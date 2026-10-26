@@ -5,6 +5,7 @@
 
 #include <ttak/net/poller.h>
 #include <ttak/mem/mem.h>
+#include <ttak/compat/baremetal.h>
 
 #include <stdlib.h>
 #include <string.h>
@@ -30,10 +31,15 @@
 #    define _SSIZE_T_DEFINED
 #    define _SSIZE_T_
 #  endif
+#elif TTAK_NET_LWIP
+#include "../../internal/ttak/net_lwip.h"
+#define TTAK_NET_USE_EPOLL 0
 #else
 #include <poll.h>
 #include <unistd.h>
-#if defined(__linux__)
+/* TinyCC ignores the packed attribute on glibc's x86-64 struct epoll_event
+ * (12 bytes), so it would read events at the wrong offsets. */
+#if defined(__linux__) && !defined(__TINYC__)
 #include <sys/epoll.h>
 #define TTAK_NET_USE_EPOLL 1
 #else

@@ -26,6 +26,8 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #pragma comment(lib, "ws2_32.lib")
+#elif TTAK_NET_LWIP
+#include "../../internal/ttak/net_lwip.h"
 #else
 #include <sys/socket.h>
 #include <netinet/in.h>

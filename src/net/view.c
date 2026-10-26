@@ -1,6 +1,7 @@
 #include <ttak/net/view.h>
 #include <ttak/mols_control.h>
 #include <ttak/io/io.h>
+#include <ttak/compat/baremetal.h>
 #include <string.h>
 #include <stdlib.h>
 #ifdef _WIN32
@@ -25,6 +26,8 @@
 #  endif
 #endif
 #pragma comment(lib, "ws2_32.lib")
+#elif TTAK_NET_LWIP
+#include "../../internal/ttak/net_lwip.h"
 #else
 #include <sys/socket.h>
 #include <sys/uio.h>
