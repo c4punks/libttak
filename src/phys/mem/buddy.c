@@ -201,6 +201,10 @@ static inline void *buddy_heap_alloc(size_t bytes) {
     }
 #if defined(_WIN32)
     return _aligned_malloc(bytes, 64);
+#elif TTAK_PLATFORM_BAREMETAL
+    /* newlib hides posix_memalign without POSIX visibility; C11
+     * aligned_alloc wants a size that is a multiple of the alignment. */
+    return aligned_alloc(64, (bytes + 63u) & ~(size_t)63u);
 #else
     void *ptr = NULL;
     if (posix_memalign(&ptr, 64, bytes) != 0) {

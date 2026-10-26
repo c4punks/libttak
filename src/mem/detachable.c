@@ -14,7 +14,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#ifndef _WIN32
+#if TTAK_DETACHABLE_HAVE_SIGNALS
 #include <signal.h>
 #include <unistd.h>
 #endif
@@ -23,7 +23,7 @@
     #include <sys/mman.h>
 #endif
 
-#ifndef _WIN32
+#if TTAK_DETACHABLE_HAVE_SIGNALS
 #ifndef NSIG
 #ifdef _NSIG
 #define NSIG _NSIG
@@ -34,7 +34,7 @@
 #endif
 #endif
 
-#ifndef _WIN32
+#if TTAK_DETACHABLE_HAVE_SIGNALS
 typedef struct {
     atomic_bool triggered;
     _Bool graceful;
@@ -50,7 +50,7 @@ static ttak_detachable_context_t **g_ctx_registry = NULL;
 static size_t g_ctx_registry_len = 0;
 static size_t g_ctx_registry_cap = 0;
 
-#ifndef _WIN32
+#if TTAK_DETACHABLE_HAVE_SIGNALS
 static ttak_signal_guard_t g_signal_guard = {
     .triggered = false,
     .graceful = true,
@@ -79,7 +79,7 @@ static bool ttak_detachable_validate_status(ttak_detachable_context_t *ctx,
                                             ttak_detachable_mode_t *mode_out);
 static uint64_t ttak_detachable_now_ns(void);
 static bool ttak_detachable_flip_should_quarantine(ttak_detachable_context_t *ctx, size_t size);
-#ifndef _WIN32
+#if TTAK_DETACHABLE_HAVE_SIGNALS
 static void ttak_detachable_signal_handler(int signo);
 static int ttak_hard_kill_configure(sigset_t signals, int *ret, _Bool graceful);
 #endif
@@ -398,7 +398,7 @@ static bool ttak_detachable_validate_status(ttak_detachable_context_t *ctx,
     return true;
 }
 
-#ifndef _WIN32
+#if TTAK_DETACHABLE_HAVE_SIGNALS
 int ttak_hard_kill_graceful_exit(sigset_t signals, int *ret) {
     return ttak_hard_kill_configure(signals, ret, true);
 }
@@ -642,7 +642,7 @@ static void ttak_detachable_cache_drain(ttak_detachable_context_t *ctx, ttak_det
     }
 }
 
-#ifndef _WIN32
+#if TTAK_DETACHABLE_HAVE_SIGNALS
 static void ttak_detachable_global_shutdown(_Bool flush_rows) {
     pthread_mutex_lock(&g_ctx_registry_lock);
     for (size_t i = 0; i < g_ctx_registry_len; ++i) {

@@ -18,14 +18,15 @@
  *
  * POSIX platforms use sigsetjmp/siglongjmp so that the signal mask is
  * saved and restored across non-local jumps. Windows (MinGW) lacks
- * the sig* variants, so we fall back to plain setjmp/longjmp.
+ * the sig* variants and bare-metal targets have no signals, so both fall
+ * back to plain setjmp/longjmp.
  *
  * Both wrappers additionally record a magic value and the current
  * pthread ID so that callers can verify the buffer is live and belongs
  * to the executing thread.
  */
 
-#ifdef _WIN32
+#if defined(_WIN32) || TTAK_PLATFORM_BAREMETAL
 
 #define tt_setjmp(env, magic_ptr, tid_ptr) \
 ( *(magic_ptr) = TT_JMP_MAGIC,         \
@@ -67,6 +68,6 @@ do {                                         \
 	siglongjmp(env, val);                    \
 } while (0)
 
-#endif /* _WIN32 */
+#endif /* _WIN32 || TTAK_PLATFORM_BAREMETAL */
 
 #endif /* TTAK_INTERNAL_TT_JMP_H */

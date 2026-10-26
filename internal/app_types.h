@@ -5,6 +5,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdalign.h>
+#include <ttak/types/ttak_compiler.h>
 #include <ttak/compat/pthread.h>
 #include <ttak/mem/mem.h>
 
@@ -34,7 +35,7 @@
 #endif
 
 #ifndef TTAK_THREAD_LOCAL
-#if defined(__TINYC__)
+#if TTAK_NO_NATIVE_TLS
 #define TTAK_THREAD_LOCAL
 #else
 #define TTAK_THREAD_LOCAL _Thread_local

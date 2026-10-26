@@ -43,7 +43,7 @@
     #endif
 #else
     #include <unistd.h>
-    #if EMBEDDED
+    #if EMBEDDED && !TTAK_PLATFORM_BAREMETAL
         #include <sys/mman.h>
     #endif
 #endif
@@ -136,7 +136,9 @@ static pthread_mutex_t global_init_lock = PTHREAD_MUTEX_INITIALIZER;
 #if EMBEDDED
 #include <ttak/phys/mem/buddy.h>
 #ifndef TTAK_EMBEDDED_POOL_ORDER
-#if defined(__LP64__) || defined(_WIN64)
+#if TTAK_PLATFORM_BAREMETAL
+#define TTAK_EMBEDDED_POOL_ORDER 16 /* 64 KiB: fits most Cortex-M SRAM */
+#elif defined(__LP64__) || defined(_WIN64)
 #define TTAK_EMBEDDED_POOL_ORDER 28
 #else
 #define TTAK_EMBEDDED_POOL_ORDER 24
@@ -152,7 +154,11 @@ static void *embedded_pool_start = buddy_pool;
 static size_t embedded_pool_len = sizeof(buddy_pool);
 
 #ifndef TTAK_BUDDY_DEFAULT_EMBEDDED_MODE
+#if TTAK_PLATFORM_BAREMETAL
+#define TTAK_BUDDY_DEFAULT_EMBEDDED_MODE 1 /* static pool only, no heap growth */
+#else
 #define TTAK_BUDDY_DEFAULT_EMBEDDED_MODE 0 /* override to 1 for strict embedded builds */
+#endif
 #endif
 
 static int ttak_detect_embedded_pool_mode(void) {
@@ -215,7 +221,7 @@ static void ttak_embedded_os_free(void *ptr, size_t size) {
 }
 #endif
 
-#if defined(__TINYC__)
+#if TTAK_NO_NATIVE_TLS
 static pthread_once_t ttak_tls_once = PTHREAD_ONCE_INIT;
 static pthread_key_t ttak_tls_guard_key;
 static pthread_key_t ttak_tls_memop_key;

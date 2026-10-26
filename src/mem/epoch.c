@@ -225,11 +225,10 @@ typedef struct ttak_thread_node {
 /**
  * @brief Per-thread state pointer.
  *
- * In non-TinyCC builds we use TLS storage. For TinyCC, a single global pointer is used.
- * That mode is not thread-safe but preserves buildability in constrained toolchains.
+ * With native TLS this is a _Thread_local pointer. Without it (TinyCC,
+ * bare metal) the state lives behind a pthread key.
  */
-/* Tiny C does not support _Thread_local */
-#if defined(__TINYC__)
+#if TTAK_NO_NATIVE_TLS || defined(TTAK_EPOCH_FORCE_TLS_SHIM)
 TTAK_VIS_DEFAULT ttak_thread_state_t *t_local_state_unused = NULL;
 static pthread_key_t g_tls_key;
 static pthread_once_t g_tls_once = PTHREAD_ONCE_INIT;
@@ -379,7 +378,7 @@ void ttak_epoch_subsystem_init(void) {
  * This function is idempotent for the current thread.
  */
 void ttak_epoch_register_thread(void) {
-#if defined(__TINYC__)
+#if TTAK_NO_NATIVE_TLS || defined(TTAK_EPOCH_FORCE_TLS_SHIM)
     ttak_thread_state_t *st = ttak_get_t_local_state();
     if (st) return;
 #else
@@ -395,7 +394,7 @@ void ttak_epoch_register_thread(void) {
         return;
     }
 
-#if defined(__TINYC__)
+#if TTAK_NO_NATIVE_TLS || defined(TTAK_EPOCH_FORCE_TLS_SHIM)
     ttak_set_t_local_state(new_st);
 #else
     t_local_state = new_st;
@@ -411,7 +410,7 @@ void ttak_epoch_register_thread(void) {
 
     ttak_thread_node_t *node = (ttak_thread_node_t *)ttak_dangerous_calloc(1, sizeof(ttak_thread_node_t));
     if (!node) {
-#if defined(__TINYC__)
+#if TTAK_NO_NATIVE_TLS || defined(TTAK_EPOCH_FORCE_TLS_SHIM)
         ttak_set_t_local_state(NULL);
 #else
         t_local_state = NULL;
@@ -443,7 +442,7 @@ void ttak_epoch_register_thread(void) {
  * intentionally not freed to avoid races with concurrent reclaim operations.
  */
 void ttak_epoch_deregister_thread(void) {
-#if defined(__TINYC__)
+#if TTAK_NO_NATIVE_TLS || defined(TTAK_EPOCH_FORCE_TLS_SHIM)
     ttak_thread_state_t *st = ttak_get_t_local_state();
     if (!st) return;
     atomic_store_explicit(&st->active, false, memory_order_seq_cst);

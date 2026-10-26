@@ -14,6 +14,7 @@
 #include <stdint.h>
 #ifndef _WIN32
 #include <sched.h>
+#include <ttak/compat/baremetal.h>
 #else
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN

@@ -97,6 +97,29 @@ endif
 endif
 # ------------------------------------------------------------------------
 
+# ---- Bare-metal toolchain (PLATFORM=baremetal) -------------------------
+# Cross-builds lib/libttak.a for OS-less microcontrollers (newlib, no RTOS).
+# MCU_FLAGS selects the core; the default is Cortex-M7 with a
+# double-precision FPU (STM32F76x/F77x, e.g. STM32F769I-DISCO).
+PLATFORM ?= hosted
+ifeq ($(PLATFORM),baremetal)
+CROSS_COMPILE ?= arm-none-eabi-
+ifneq ($(filter default undefined environment,$(origin CC)),)
+CC = $(CROSS_COMPILE)gcc
+endif
+ifneq ($(filter default undefined environment,$(origin AR)),)
+AR = $(CROSS_COMPILE)ar
+endif
+MCU_FLAGS ?= -mcpu=cortex-m7 -mthumb -mfloat-abi=hard -mfpu=fpv5-d16
+BAREMETAL_OPT ?= -Os -g
+override EMBEDDED := 1
+CFLAGS = -std=c17 -Wall -Wextra -Iinclude $(MCU_FLAGS) $(BAREMETAL_OPT) \
+         -ffunction-sections -fdata-sections \
+         -DTTAK_PLATFORM_BAREMETAL=1 -DEMBEDDED=1 $(EXTRA_CFLAGS)
+LDFLAGS = $(MCU_FLAGS) -Wl,--gc-sections $(EXTRA_LDFLAGS)
+endif
+# ------------------------------------------------------------------------
+
 PREFIX ?= /usr/local
 LIBDIR = $(PREFIX)/lib
 INCDIR = $(PREFIX)/include
@@ -114,6 +137,15 @@ else
 C_BASE_ACCEL_SRCS = src/accel/accel_cpu.c src/accel/ttak_accel_dispatch.c
 endif
 SRCS += $(C_BASE_ACCEL_SRCS)
+
+# Bare-metal has no sockets, poll(), /proc or __int128 (accel CPU backend).
+BAREMETAL_EXCLUDED_SRCS = src/net/endpoint.c src/net/poller.c src/net/session.c \
+                          src/net/view.c src/io/async.c src/io/io.c src/io/zerocopy.c \
+                          src/stats/system_usage.c
+ifeq ($(PLATFORM),baremetal)
+SRC_DIRS += src/platform
+SRCS = $(filter-out $(BAREMETAL_EXCLUDED_SRCS),$(foreach dir,$(SRC_DIRS),$(wildcard $(dir)/*.c)))
+endif
 C_OPTIONAL_SRCS =
 CUDA_SRCS =
 ROCM_SRCS =

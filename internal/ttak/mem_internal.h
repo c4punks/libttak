@@ -13,6 +13,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <ttak/compat/stdatomic.h>
+#include <ttak/types/ttak_compiler.h>
 #include <ttak/compat/pthread.h>
 
 #if (!defined(EMBEDDED) || EMBEDDED == 0) && (defined(_WIN32) || defined(__unix__) || defined(__APPLE__) || defined(__linux__))
@@ -56,7 +57,7 @@ static inline void ttak_os_mem_free(void *ptr, size_t size) {
 #define POCKET_MAGIC 0x80C4E700 /**< Base magic for 4KB pocket pages (Lower bits: freelist_idx) */
 #define SLAB_MAGIC   0x51ABCA5E /**< Magic for Slab pages */
 
-#if defined(__TINYC__)
+#if TTAK_NO_NATIVE_TLS
 bool *ttak_tls_get_reentrancy_guard(void);
 #define t_reentrancy_guard (*ttak_tls_get_reentrancy_guard())
 #else
@@ -100,6 +101,13 @@ typedef struct ttak_mem_header_t ttak_mem_header_t;
 
 // --- Thread-Local Pockets (Objects <= 512B user payload) ---
 #define TTAK_POCKET_PAGE_SIZE 4096 
+#ifndef TTAK_POCKET_PAGE_COUNT
+#  if defined(TTAK_PLATFORM_BAREMETAL) && TTAK_PLATFORM_BAREMETAL
+#    define TTAK_POCKET_PAGE_COUNT 8
+#  else
+#    define TTAK_POCKET_PAGE_COUNT 2048
+#  endif
+#endif
 #define TTAK_POCKET_ALIGNMENT 4096 
 #define TTAK_NUM_POCKET_FREELISTS 4 
 
@@ -111,7 +119,7 @@ typedef struct ttak_mem_pocket_freelist {
     void* head; /**< Top of the free-stack */
 } ttak_mem_pocket_freelist_t;
 
-#if defined(__TINYC__)
+#if TTAK_NO_NATIVE_TLS
 ttak_mem_pocket_freelist_t *ttak_tls_get_pocket_freelists(void);
 #define ttak_pocket_freelists (ttak_tls_get_pocket_freelists())
 #else
@@ -122,12 +130,28 @@ ttak_mem_pocket_freelist_t *ttak_tls_get_pocket_freelists(void);
 extern TTAK_THREAD_LOCAL ttak_mem_pocket_freelist_t ttak_pocket_freelists[TTAK_NUM_POCKET_FREELISTS];
 #endif
 
+/* The VMA, large and pocket regions are static .bss arrays. Hosted builds
+ * size them for lazily-faulted virtual memory; bare-metal builds have to
+ * fit physical SRAM, so they default to a few KiB and can be overridden. */
+
 // --- Bare-Metal VMA (Segregated Free-List + Coalescing) ---
-#define TTAK_VMA_REGION_SIZE (64 * 1024 * 1024)
+#ifndef TTAK_VMA_REGION_SIZE
+#  if defined(TTAK_PLATFORM_BAREMETAL) && TTAK_PLATFORM_BAREMETAL
+#    define TTAK_VMA_REGION_SIZE (32 * 1024)
+#  else
+#    define TTAK_VMA_REGION_SIZE (64 * 1024 * 1024)
+#  endif
+#endif
 #define TTAK_VMA_ALIGNMENT 64
 
 // --- Dedicated Large Region (>=2MB user payload) ---
-#define TTAK_LARGE_REGION_SIZE (256 * 1024 * 1024)
+#ifndef TTAK_LARGE_REGION_SIZE
+#  if defined(TTAK_PLATFORM_BAREMETAL) && TTAK_PLATFORM_BAREMETAL
+#    define TTAK_LARGE_REGION_SIZE (4 * 1024) /* EMBEDDED builds use the buddy pool instead */
+#  else
+#    define TTAK_LARGE_REGION_SIZE (256 * 1024 * 1024)
+#  endif
+#endif
 
 /**
  * @struct ttak_mem_vma_region

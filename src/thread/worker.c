@@ -28,14 +28,14 @@
     #include <sys/resource.h>
     #include <unistd.h>
 #endif
-#if defined(__TINYC__)
+#if TTAK_NO_NATIVE_TLS
 #include <ttak/compat/pthread.h>
 #endif
 #include "../../internal/app_types.h"
 #include "../../internal/tt_jmp.h"
 #include "../../internal/ttak/shard_map.h"
 
-#if defined(__TINYC__)
+#if TTAK_NO_NATIVE_TLS
 static pthread_once_t worker_tls_once = PTHREAD_ONCE_INIT;
 static pthread_key_t worker_tls_key;
 static void worker_tls_init(void) { pthread_key_create(&worker_tls_key, NULL); }
@@ -107,6 +107,8 @@ void *ttak_worker_routine(void *arg) {
         else if (self->wrapper->nice_val > 10) p = THREAD_PRIORITY_LOWEST;
         else if (self->wrapper->nice_val > 0) p = THREAD_PRIORITY_BELOW_NORMAL;
         SetThreadPriority(GetCurrentThread(), p);
+#elif TTAK_PLATFORM_BAREMETAL
+        /* No scheduler to apply a nice value to. */
 #else
         setpriority(PRIO_PROCESS, 0, self->wrapper->nice_val);
 #endif

@@ -4,7 +4,16 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
-#ifndef _WIN32
+#include <ttak/compat/baremetal.h>
+
+/* Signal-driven shutdown hooks need POSIX signals: not on Win32 or bare metal. */
+#if !defined(_WIN32) && !TTAK_PLATFORM_BAREMETAL
+#define TTAK_DETACHABLE_HAVE_SIGNALS 1
+#else
+#define TTAK_DETACHABLE_HAVE_SIGNALS 0
+#endif
+
+#if TTAK_DETACHABLE_HAVE_SIGNALS
 #include <signal.h>
 #endif
 #include <ttak/compat/pthread.h>
@@ -205,7 +214,7 @@ ttak_detachable_allocation_t ttak_detachable_mem_alloc(ttak_detachable_context_t
  */
 void ttak_detachable_mem_free(ttak_detachable_context_t *ctx, ttak_detachable_allocation_t *alloc);
 
-#ifndef _WIN32
+#if TTAK_DETACHABLE_HAVE_SIGNALS
 /**
  * @brief Registers signal handlers that gracefully flush detachable arenas and exit.
  *
@@ -223,7 +232,7 @@ int ttak_hard_kill_graceful_exit(sigset_t signals, int *ret);
  * @return 0 on success, -1 on failure.
  */
 int ttak_hard_kill_exit(sigset_t signals, int *ret);
-#endif
+#endif /* TTAK_DETACHABLE_HAVE_SIGNALS */
 
 #ifdef __cplusplus
 }
