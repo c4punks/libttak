@@ -12,6 +12,7 @@
 
 #include <errno.h>
 #include <stdbool.h>
+#include "../../internal/ttak/platform_internal.h"
 
 #if defined(__ARM_ARCH_PROFILE) && __ARM_ARCH_PROFILE == 'M'
 #define TTAK_BM_ARM_M 1
@@ -54,11 +55,14 @@ TTAK_WEAK uint32_t ttak_platform_cpu_hz(void) {
 
 static uint64_t g_cycles_hi;
 static uint32_t g_cycles_last;
+static uint64_t g_cycles_stuck;
 static int g_dwt_ready;
 
 /* CYCCNT is 32 bits wide and wraps every ~20 s at 216 MHz. Each call
  * extends it to 64 bits, so callers must sample at least once per wrap
- * period; long-running idle loops should override ttak_platform_now_ns. */
+ * period; long-running idle loops should override ttak_platform_now_ns.
+ * A counter that does not move between reads (emulators without DWT) is
+ * advanced artificially so busy-waits still terminate. */
 static uint64_t ttak_bm_cycles(void) {
     uint32_t key = ttak_bm_irq_save();
     if (!g_dwt_ready) {
@@ -70,13 +74,14 @@ static uint64_t ttak_bm_cycles(void) {
     }
     uint32_t now = TTAK_BM_DWT_CYCCNT;
     if (now < g_cycles_last) g_cycles_hi += (1ull << 32);
+    else if (now == g_cycles_last) g_cycles_stuck += 1000u;
     g_cycles_last = now;
-    uint64_t total = g_cycles_hi | now;
+    uint64_t total = (g_cycles_hi | now) + g_cycles_stuck;
     ttak_bm_irq_restore(key);
     return total;
 }
 
-TTAK_WEAK uint64_t ttak_platform_now_ns(void) {
+uint64_t ttak_bm_hw_now_ns(void) {
     uint64_t cycles = ttak_bm_cycles();
     uint64_t hz = ttak_platform_cpu_hz();
     if (hz == 0) hz = 16000000u;
@@ -88,14 +93,28 @@ TTAK_WEAK uint64_t ttak_platform_now_ns(void) {
 #else /* !TTAK_BM_HAVE_DWT */
 
 /* No cycle counter: advance 1 us per call so timeouts still expire.
- * Real applications are expected to override this. */
-TTAK_WEAK uint64_t ttak_platform_now_ns(void) {
+ * Real applications are expected to override ttak_platform_now_ns(). */
+uint64_t ttak_bm_hw_now_ns(void) {
     static uint64_t fake_ns;
     fake_ns += 1000u;
     return fake_ns;
 }
 
 #endif /* TTAK_BM_HAVE_DWT */
+
+void ttak_bm_spin_ns(uint64_t ns) {
+    uint64_t start = ttak_bm_hw_now_ns();
+    while (ttak_bm_hw_now_ns() - start < ns) {
+    }
+}
+
+/* With FreeRTOS, src/platform/freertos.c provides scheduler-aware versions
+ * of the clock, sleep and yield calls. */
+#if !TTAK_PLATFORM_FREERTOS
+TTAK_WEAK uint64_t ttak_platform_now_ns(void) {
+    return ttak_bm_hw_now_ns();
+}
+#endif
 
 TTAK_WEAK int clock_gettime(clockid_t clock_id, struct timespec *tp) {
     (void)clock_id;
@@ -109,6 +128,7 @@ TTAK_WEAK int clock_gettime(clockid_t clock_id, struct timespec *tp) {
     return 0;
 }
 
+#if !TTAK_PLATFORM_FREERTOS
 TTAK_WEAK int nanosleep(const struct timespec *rqtp, struct timespec *rmtp) {
     if (!rqtp || rqtp->tv_nsec < 0 || rqtp->tv_nsec >= 1000000000L) {
         errno = EINVAL;
@@ -125,13 +145,14 @@ TTAK_WEAK int nanosleep(const struct timespec *rqtp, struct timespec *rmtp) {
     return 0;
 }
 
+TTAK_WEAK int sched_yield(void) {
+    return 0;
+}
+#endif
+
 TTAK_WEAK int usleep(useconds_t usec) {
     struct timespec ts = { (time_t)(usec / 1000000u), (long)(usec % 1000000u) * 1000L };
     return nanosleep(&ts, NULL);
-}
-
-TTAK_WEAK int sched_yield(void) {
-    return 0;
 }
 
 #if TTAK_BM_ARM_M

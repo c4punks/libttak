@@ -10,9 +10,16 @@
  * This file supplies a minimal but correct compatibility layer built on
  * top of the Windows synchronisation API (SRWLOCK, CONDITION_VARIABLE,
  * CRITICAL_SECTION, CreateThread / WaitForSingleObject, InitOnceExecuteOnce).
+ *
+ * Bare-metal and FreeRTOS builds use <ttak/compat/pthread.h> instead:
+ * newlib's own <pthread.h> declares prototypes that clash with it.
  */
 
-#if !defined(_MSC_VER) || !defined(_WIN32)
+#include <ttak/compat/baremetal.h>
+
+#if TTAK_PLATFORM_BAREMETAL
+#  include <ttak/compat/pthread.h>
+#elif !defined(_MSC_VER) || !defined(_WIN32)
 #  if defined(__has_include_next)
 #    if __has_include_next(<pthread.h>)
 #      include_next <pthread.h>

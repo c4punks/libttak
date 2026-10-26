@@ -12,7 +12,9 @@
  *  - sched_yield() as a no-op
  *
  * Threading primitives are covered by the single-threaded stubs in
- * <ttak/compat/pthread.h>.
+ * <ttak/compat/pthread.h>. Adding -DTTAK_PLATFORM_FREERTOS=1 (Makefile:
+ * PLATFORM=freertos) swaps them, and the clock/sleep/yield calls, for the
+ * FreeRTOS implementations in src/platform/freertos.c.
  *
  * All definitions in src/platform/baremetal.c are weak, so applications
  * that already provide clock_gettime() (e.g. from their own syscalls) or a
@@ -32,6 +34,14 @@
 
 #ifndef TTAK_PLATFORM_BAREMETAL
 #define TTAK_PLATFORM_BAREMETAL 0
+#endif
+
+/* FreeRTOS builds are bare-metal builds with a real threading backend. */
+#ifndef TTAK_PLATFORM_FREERTOS
+#define TTAK_PLATFORM_FREERTOS 0
+#endif
+#if TTAK_PLATFORM_FREERTOS && !TTAK_PLATFORM_BAREMETAL
+#error "TTAK_PLATFORM_FREERTOS=1 also requires TTAK_PLATFORM_BAREMETAL=1"
 #endif
 
 #if TTAK_PLATFORM_BAREMETAL

@@ -97,12 +97,19 @@ endif
 endif
 # ------------------------------------------------------------------------
 
-# ---- Bare-metal toolchain (PLATFORM=baremetal) -------------------------
-# Cross-builds lib/libttak.a for OS-less microcontrollers (newlib, no RTOS).
+# ---- Bare-metal toolchain (PLATFORM=baremetal | freertos) --------------
+# Cross-builds lib/libttak.a for Cortex-M microcontrollers with newlib.
 # MCU_FLAGS selects the core; the default is Cortex-M7 with a
 # double-precision FPU (STM32F76x/F77x, e.g. STM32F769I-DISCO).
+#
+# PLATFORM=freertos adds real threads on FreeRTOS. It needs the kernel
+# sources and the application's FreeRTOSConfig.h, which libttak is
+# compiled against:
+#   FREERTOS_KERNEL_PATH  FreeRTOS-Kernel checkout (V11.x)
+#   FREERTOS_PORT         port directory under portable/ (GCC/ARM_CM4F)
+#   FREERTOS_CONFIG_DIR   directory holding FreeRTOSConfig.h
 PLATFORM ?= hosted
-ifeq ($(PLATFORM),baremetal)
+ifneq ($(filter baremetal freertos,$(PLATFORM)),)
 CROSS_COMPILE ?= arm-none-eabi-
 ifneq ($(filter default undefined environment,$(origin CC)),)
 CC = $(CROSS_COMPILE)gcc
@@ -117,6 +124,16 @@ CFLAGS = -std=c17 -Wall -Wextra -Iinclude $(MCU_FLAGS) $(BAREMETAL_OPT) \
          -ffunction-sections -fdata-sections \
          -DTTAK_PLATFORM_BAREMETAL=1 -DEMBEDDED=1 $(EXTRA_CFLAGS)
 LDFLAGS = $(MCU_FLAGS) -Wl,--gc-sections $(EXTRA_LDFLAGS)
+endif
+ifeq ($(PLATFORM),freertos)
+FREERTOS_PORT ?= GCC/ARM_CM4F
+FREERTOS_CONFIG_DIR ?= tests/baremetal/freertos
+ifeq ($(FREERTOS_KERNEL_PATH),)
+$(error PLATFORM=freertos needs FREERTOS_KERNEL_PATH=<FreeRTOS-Kernel checkout>)
+endif
+FREERTOS_INCLUDES = -I$(FREERTOS_CONFIG_DIR) -I$(FREERTOS_KERNEL_PATH)/include \
+                    -I$(FREERTOS_KERNEL_PATH)/portable/$(FREERTOS_PORT)
+CFLAGS += -DTTAK_PLATFORM_FREERTOS=1 $(FREERTOS_INCLUDES)
 endif
 # ------------------------------------------------------------------------
 
@@ -142,7 +159,7 @@ SRCS += $(C_BASE_ACCEL_SRCS)
 BAREMETAL_EXCLUDED_SRCS = src/net/endpoint.c src/net/poller.c src/net/session.c \
                           src/net/view.c src/io/async.c src/io/io.c src/io/zerocopy.c \
                           src/stats/system_usage.c
-ifeq ($(PLATFORM),baremetal)
+ifneq ($(filter baremetal freertos,$(PLATFORM)),)
 SRC_DIRS += src/platform
 SRCS = $(filter-out $(BAREMETAL_EXCLUDED_SRCS),$(foreach dir,$(SRC_DIRS),$(wildcard $(dir)/*.c)))
 endif
