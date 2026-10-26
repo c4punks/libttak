@@ -142,7 +142,7 @@ extern TTAK_THREAD_LOCAL ttak_mem_pocket_freelist_t ttak_pocket_freelists[TTAK_N
 #    define TTAK_VMA_REGION_SIZE (64 * 1024 * 1024)
 #  endif
 #endif
-#define TTAK_VMA_ALIGNMENT 64
+#define TTAK_VMA_ALIGNMENT TTAK_MEM_HEADER_ALIGN
 
 // --- Dedicated Large Region (>=2MB user payload) ---
 #ifndef TTAK_LARGE_REGION_SIZE

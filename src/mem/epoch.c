@@ -220,6 +220,7 @@ typedef struct ttak_thread_node {
     ttak_thread_state_t *state;
     uint32_t logical_tid;
     struct ttak_thread_node *next;
+    void * _Atomic owner;   /* the node itself while a thread holds it, NULL once released */
 } ttak_thread_node_t;
 
 /**
@@ -232,7 +233,15 @@ typedef struct ttak_thread_node {
 TTAK_VIS_DEFAULT ttak_thread_state_t *t_local_state_unused = NULL;
 static pthread_key_t g_tls_key;
 static pthread_once_t g_tls_once = PTHREAD_ONCE_INIT;
-static void _ttak_tls_init(void) { pthread_key_create(&g_tls_key, NULL); }
+static void epoch_release_node(ttak_thread_state_t *st);
+/* Threads that exit without ttak_epoch_deregister_thread() still give
+ * their node back. */
+static void _ttak_tls_dtor(void *value) {
+    ttak_thread_state_t *st = (ttak_thread_state_t *)value;
+    atomic_store_explicit(&st->active, false, memory_order_seq_cst);
+    epoch_release_node(st);
+}
+static void _ttak_tls_init(void) { pthread_key_create(&g_tls_key, _ttak_tls_dtor); }
 ttak_thread_state_t *ttak_get_t_local_state(void) {
     pthread_once(&g_tls_once, _ttak_tls_init);
     return (ttak_thread_state_t *)pthread_getspecific(g_tls_key);
@@ -389,6 +398,26 @@ void ttak_epoch_register_thread(void) {
         ttak_epoch_subsystem_init();
     }
 
+    /* Nodes stay on the list for good (reclaim walks it without a lock),
+     * so a thread that exited hands its node to the next one. */
+    for (ttak_thread_node_t *it = (ttak_thread_node_t *)TT_ATOMIC_LOAD_PTR((void * _Atomic *)&g_thread_list,
+                                                                          memory_order_acquire);
+         it; it = it->next) {
+        void *expected = NULL;
+        if (TT_ATOMIC_LOAD_PTR((void * _Atomic *)&it->owner, memory_order_acquire) == NULL &&
+            TT_ATOMIC_CAS_WEAK_PTR((void * _Atomic *)&it->owner, &expected, it,
+                                   memory_order_acq_rel, memory_order_acquire)) {
+            TT_ATOMIC_STORE_U32(&it->state->local_epoch, 0, memory_order_relaxed);
+            TT_ATOMIC_STORE_BOOL(&it->state->active, false, memory_order_release);
+#if TTAK_NO_NATIVE_TLS || defined(TTAK_EPOCH_FORCE_TLS_SHIM)
+            ttak_set_t_local_state(it->state);
+#else
+            t_local_state = it->state;
+#endif
+            return;
+        }
+    }
+
     ttak_thread_state_t *new_st = (ttak_thread_state_t *)ttak_dangerous_calloc(1, sizeof(ttak_thread_state_t));
     if (!new_st) {
         return;
@@ -419,6 +448,7 @@ void ttak_epoch_register_thread(void) {
     }
 
     node->state = new_st;
+    TT_ATOMIC_STORE_PTR((void * _Atomic *)&node->owner, node, memory_order_relaxed);
     node->logical_tid = TT_ATOMIC_FETCH_ADD_U32(&g_tid_counter, 1, memory_order_relaxed);
     new_st->logical_tid = node->logical_tid;
 
@@ -435,11 +465,24 @@ void ttak_epoch_register_thread(void) {
     } while (1);
 }
 
+/* Hand the node holding @p st back for reuse by a later thread. */
+static void epoch_release_node(ttak_thread_state_t *st) {
+    for (ttak_thread_node_t *it = (ttak_thread_node_t *)TT_ATOMIC_LOAD_PTR((void * _Atomic *)&g_thread_list,
+                                                                          memory_order_acquire);
+         it; it = it->next) {
+        if (it->state == st) {
+            TT_ATOMIC_STORE_PTR((void * _Atomic *)&it->owner, NULL, memory_order_release);
+            return;
+        }
+    }
+}
+
 /**
  * @brief Deregister the current thread from epoch tracking.
  *
- * This marks the thread inactive and drops the TLS pointer. The allocated state is
- * intentionally not freed to avoid races with concurrent reclaim operations.
+ * This marks the thread inactive and drops the TLS pointer. The state is
+ * not freed, since reclaim may be reading it; the next thread to register
+ * reuses it instead.
  */
 void ttak_epoch_deregister_thread(void) {
 #if TTAK_NO_NATIVE_TLS || defined(TTAK_EPOCH_FORCE_TLS_SHIM)
@@ -447,18 +490,21 @@ void ttak_epoch_deregister_thread(void) {
     if (!st) return;
     atomic_store_explicit(&st->active, false, memory_order_seq_cst);
     ttak_set_t_local_state(NULL);
+    epoch_release_node(st);
 #else
-    if (!t_local_state) {
+    ttak_thread_state_t *st = t_local_state;
+    if (!st) {
         return;
     }
 
 #if defined(_MSC_VER)
-    t_local_state->active = false;
+    st->active = false;
 #else
-    atomic_store_explicit(&t_local_state->active, false, memory_order_seq_cst);
+    atomic_store_explicit(&st->active, false, memory_order_seq_cst);
 #endif
 
     t_local_state = NULL;
+    epoch_release_node(st);
 #endif
 }
 

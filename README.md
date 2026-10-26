@@ -258,6 +258,12 @@ What changes on bare metal:
 - **Static memory.** Allocations come from fixed `.bss` pools (about 140 KiB
   by default). Tune them with `TTAK_EMBEDDED_POOL_ORDER` (buddy pool, default
   16 = 64 KiB), `TTAK_VMA_REGION_SIZE` and `TTAK_POCKET_PAGE_COUNT`.
+  `ttak_mem_buddy_get_stats()` reports the buddy pool's usage and its largest
+  free block, so you can see fragmentation.
+- **8-byte alignment.** `ttak_mem_alloc()` returns 8-byte aligned memory
+  (64 on hosted builds) so that small objects keep small headers. Build the
+  library and firmware with `-DTTAK_MEM_HEADER_ALIGN=32` if buffers must sit
+  on Cortex-M7 cache lines, e.g. for DMA.
 - **Clock.** Timing uses the DWT cycle counter scaled by
   `ttak_platform_cpu_hz()`, which defaults to 16 MHz. Override it, or
   `ttak_platform_now_ns()` for cores without DWT (Cortex-M0/M0+/M23):
