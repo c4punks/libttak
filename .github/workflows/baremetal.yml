@@ -59,3 +59,28 @@ jobs:
       - name: Run tests
         run: scripts/baremetal/run_qemu.sh tests/baremetal/build/mps2_an500/*.elf
         timeout-minutes: 15
+
+  freertos-qemu-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    name: unit tests on FreeRTOS (QEMU mps2-an500, Cortex-M7)
+    env:
+      FREERTOS_TAG: V11.1.0
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install toolchain and QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-arm-none-eabi libnewlib-arm-none-eabi qemu-system-arm
+
+      - name: Fetch FreeRTOS-Kernel
+        run: git clone --depth 1 --branch "$FREERTOS_TAG" https://github.com/FreeRTOS/FreeRTOS-Kernel "$RUNNER_TEMP/FreeRTOS-Kernel"
+
+      - name: Build test images
+        run: make PLATFORM=freertos FREERTOS_KERNEL_PATH="$RUNNER_TEMP/FreeRTOS-Kernel" BOARD=mps2_an500 baremetal-tests
+
+      - name: Run tests
+        run: scripts/baremetal/run_qemu.sh tests/baremetal/build/mps2_an500-freertos/*.elf
+        timeout-minutes: 15

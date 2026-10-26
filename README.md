@@ -270,6 +270,44 @@ What changes on bare metal:
   `net/session`, `net/view`, `io/async`, `io/io`, `io/zerocopy`), `/proc`
   statistics, and the `__int128` accelerator backend.
 
+## FreeRTOS
+
+`PLATFORM=freertos` keeps the bare-metal build and adds real threads:
+pthread calls run on FreeRTOS tasks, mutexes, and task notifications, so
+thread pools, workers, and async scheduling work.
+
+```sh
+make PLATFORM=freertos FREERTOS_KERNEL_PATH=/path/to/FreeRTOS-Kernel \
+     FREERTOS_CONFIG_DIR=/path/to/your/app   # holds FreeRTOSConfig.h
+```
+
+Compile your firmware with `-DTTAK_PLATFORM_BAREMETAL=1 -DTTAK_PLATFORM_FREERTOS=1 -DEMBEDDED=1`.
+Your `FreeRTOSConfig.h` needs:
+
+```c
+#define configUSE_MUTEXES                        1
+#define configSUPPORT_DYNAMIC_ALLOCATION         1
+#define configNUM_THREAD_LOCAL_STORAGE_POINTERS  1   /* slot 0: libttak */
+#define configTASK_NOTIFICATION_ARRAY_ENTRIES    2   /* last index: libttak */
+#define INCLUDE_vTaskDelete                      1
+#define INCLUDE_vTaskSuspend                     1
+#define INCLUDE_xTaskGetSchedulerState           1
+#define INCLUDE_xTaskGetCurrentTaskHandle        1
+#define INCLUDE_uxTaskPriorityGet                1
+#define configUSE_NEWLIB_REENTRANT               1   /* task-safe printf/errno */
+```
+
+- Worker threads get `TTAK_FREERTOS_THREAD_STACK_BYTES` (default 16 KiB) from
+  the FreeRTOS heap and inherit the creating task's priority. You can set
+  this knob, and the other `TTAK_FREERTOS_*` knobs, in `FreeRTOSConfig.h`.
+- Once the scheduler is running, the clock comes from the tick count plus the
+  SysTick position within the current tick, so it keeps counting through idle
+  periods.
+- newlib's `malloc` is made task-safe through `__malloc_lock`.
+- Futures and promises have no destroy call yet. Every pool submission keeps
+  its future and promise allocated, so long-running firmware should reuse
+  tasks rather than submitting without bound.
+
 The unit tests run on hardware and in QEMU:
 
 ```sh
@@ -280,6 +318,10 @@ scripts/baremetal/run_qemu.sh tests/baremetal/build/mps2_an500/*.elf
 # STM32F769I-DISCO over ST-LINK (OpenOCD + virtual COM port)
 make PLATFORM=baremetal BOARD=stm32f769i_disco baremetal-tests
 scripts/baremetal/run_stm32.py tests/baremetal/build/stm32f769i_disco/*.elf
+
+# FreeRTOS, including the threaded tests (images land in <board>-freertos/)
+make PLATFORM=freertos FREERTOS_KERNEL_PATH=... BOARD=mps2_an500 baremetal-tests
+scripts/baremetal/run_qemu.sh tests/baremetal/build/mps2_an500-freertos/*.elf
 ```
 
 ---
