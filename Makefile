@@ -268,12 +268,46 @@ examples/shared-memory/shared_example: examples/shared-memory/shared_example.c $
 tests/test_%: tests/test_%.c $(LIB)
 	$(CC) $(CFLAGS) $< -o $@ $(LIB) $(LDFLAGS)
 
+# ---- Bare-metal unit tests (PLATFORM=baremetal) -------------------------
+# Builds one firmware image per single-threaded unit test for BOARD, using
+# the startup/syscall harness in tests/baremetal. Run them with
+# scripts/baremetal/run_qemu.sh or scripts/baremetal/run_stm32.py.
+BOARD ?= mps2_an500
+BM_DIR = tests/baremetal
+BM_OUT = $(BM_DIR)/build/$(BOARD)
+BM_HARNESS = $(BM_DIR)/startup_cortex_m.c $(BM_DIR)/syscalls.c $(BM_DIR)/board_$(BOARD).c
+BM_LDFLAGS = $(MCU_FLAGS) -nostartfiles -T$(BM_DIR)/$(BOARD).ld -L$(BM_DIR) \
+             --specs=nosys.specs -Wl,--gc-sections
+# Single-threaded tests that fit a 512 KiB MCU. Not built here:
+#  - need real threads: test_epoch_grace test_ringbuf test_sharded_sched
+#    test_thread test_worker_abort test_worker_dirty_recovery
+#  - need desktop-sized memory: test_bigscript (~340 KiB) test_new_mem (1 MiB)
+#  - need an OS: test_system_usage test_net_*
+BAREMETAL_TESTS = test_aria test_async test_atomic test_chacha20_poly1305 \
+                  test_detachable_mode test_epoch_gc test_ht test_limit test_logger \
+                  test_lsh test_math test_math_advanced test_mem test_nice \
+                  test_owner_complex test_pool test_priority test_security \
+                  test_security_hardening test_security_util test_seed test_shared \
+                  test_simple_ds test_smart_sched test_stats test_status test_sync \
+                  test_table test_timing test_track_mem
+BM_TEST_CFLAGS ?= -DTEST_PQ_STRESS_N=1000
+BM_TESTS ?= $(BAREMETAL_TESTS)
+BM_ELFS = $(patsubst %,$(BM_OUT)/%.elf,$(BM_TESTS))
+
+baremetal-tests: $(LIB) $(BM_ELFS)
+
+# Tests build as gnu17, the arm-none-eabi default most firmware uses; this
+# also covers headers under newlib's POSIX visibility.
+$(BM_OUT)/%.elf: tests/%.c $(BM_HARNESS) $(LIB)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -std=gnu17 $(BM_TEST_CFLAGS) -Itests $< $(BM_HARNESS) -o $@ $(LIB) $(BM_LDFLAGS) -lm
+
 directories:
 	@mkdir -p $(foreach dir,$(SRC_DIRS),obj/$(patsubst src/%,%,$(dir))) obj/accel lib
 
 clean:
-	rm -rf obj lib tests/*.d
-	find tests/ -type f ! -name "*.c" ! -name "*.h" -delete
+	rm -rf obj lib tests/*.d $(BM_DIR)/build
+	find tests/ -maxdepth 1 -type f ! -name "*.c" ! -name "*.h" -delete
 	rm -f examples/mersenne-prime/mersenne_explorer examples/mersenne-prime/*.o
 	rm -f examples/shared-memory/shared_example
 	rm -rf a.out

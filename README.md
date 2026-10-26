@@ -237,6 +237,53 @@ The Ryzen benchmark reflects real deployment behavior.
 
 ---
 
+# Microcontrollers (Bare Metal)
+
+libttak cross-builds for Cortex-M microcontrollers running newlib without
+an OS:
+
+```sh
+make PLATFORM=baremetal                                   # Cortex-M7 (default)
+make PLATFORM=baremetal MCU_FLAGS="-mcpu=cortex-m4 -mthumb -mfloat-abi=hard -mfpu=fpv4-sp-d16"
+```
+
+This produces `lib/libttak.a` built with `-DTTAK_PLATFORM_BAREMETAL=1 -DEMBEDDED=1`;
+compile your firmware with the same two defines.
+
+What changes on bare metal:
+
+- **Single-threaded.** pthread calls map to stubs; `pthread_create` fails
+  with `ENOSYS`, so thread pools cannot start. Async scheduling falls back to
+  running tasks inline.
+- **Static memory.** Allocations come from fixed `.bss` pools (about 140 KiB
+  by default). Tune them with `TTAK_EMBEDDED_POOL_ORDER` (buddy pool, default
+  16 = 64 KiB), `TTAK_VMA_REGION_SIZE` and `TTAK_POCKET_PAGE_COUNT`.
+- **Clock.** Timing uses the DWT cycle counter scaled by
+  `ttak_platform_cpu_hz()`, which defaults to 16 MHz. Override it, or
+  `ttak_platform_now_ns()` for cores without DWT (Cortex-M0/M0+/M23):
+
+  ```c
+  uint32_t ttak_platform_cpu_hz(void) { return SystemCoreClock; }
+  ```
+
+- **Not built:** sockets and `poll()` I/O (`net/endpoint`, `net/poller`,
+  `net/session`, `net/view`, `io/async`, `io/io`, `io/zerocopy`), `/proc`
+  statistics, and the `__int128` accelerator backend.
+
+The unit tests run on hardware and in QEMU:
+
+```sh
+# QEMU mps2-an500 (Cortex-M7), as in CI
+make PLATFORM=baremetal BOARD=mps2_an500 baremetal-tests
+scripts/baremetal/run_qemu.sh tests/baremetal/build/mps2_an500/*.elf
+
+# STM32F769I-DISCO over ST-LINK (OpenOCD + virtual COM port)
+make PLATFORM=baremetal BOARD=stm32f769i_disco baremetal-tests
+scripts/baremetal/run_stm32.py tests/baremetal/build/stm32f769i_disco/*.elf
+```
+
+---
+
 # Documentation
 
 Full documentation is generated through Doxygen.

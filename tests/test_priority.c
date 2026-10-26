@@ -3,6 +3,11 @@
 #include <stdint.h>
 #include "test_macros.h"
 
+/* Bare-metal builds shrink this to fit the static buddy pool. */
+#ifndef TEST_PQ_STRESS_N
+#define TEST_PQ_STRESS_N 5000
+#endif
+
 void *dummy_func(void *arg) { (void)arg; return NULL; }
 
 void test_priority_queue_basic(void) {
@@ -65,14 +70,14 @@ void test_priority_queue_heap_stress(void) {
     ttak_priority_queue_init(&q);
 
     uint64_t now = 100;
-    const int N = 5000;
+    const int N = TEST_PQ_STRESS_N;
     ttak_task_t *t = ttak_task_create(dummy_func, NULL, NULL, now);
     ASSERT(t != NULL);
 
     /* Deterministic LCG; skewed toward 0 with duplicates to exercise the
      * free list and the comparator. */
     uint32_t rng = 0x12345678u;
-    int model[5000];
+    int model[TEST_PQ_STRESS_N];
     for (int i = 0; i < N; i++) {
         rng = rng * 1664525u + 1013904223u;
         int p;
@@ -89,7 +94,7 @@ void test_priority_queue_heap_stress(void) {
     ASSERT(q.get_size(&q) == (size_t)N);
 
     /* Pop all and check order against a max-extraction model. */
-    char removed[5000] = {0};
+    char removed[TEST_PQ_STRESS_N] = {0};
     int prev = INT32_MAX;
     for (int k = 0; k < N; k++) {
         ttak_task_t *popped = q.pop(&q, now);
