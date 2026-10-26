@@ -33,7 +33,9 @@
 #else
 #include <poll.h>
 #include <unistd.h>
-#if defined(__linux__)
+/* TinyCC ignores the packed attribute on glibc's x86-64 struct epoll_event
+ * (12 bytes), so it would read events at the wrong offsets. */
+#if defined(__linux__) && !defined(__TINYC__)
 #include <sys/epoll.h>
 #define TTAK_NET_USE_EPOLL 1
 #else
