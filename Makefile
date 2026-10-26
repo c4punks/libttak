@@ -299,7 +299,7 @@ BM_LDFLAGS = $(MCU_FLAGS) -nostartfiles -T$(BM_DIR)/$(BOARD).ld -L$(BM_DIR) \
 #  - need desktop-sized memory: test_bigscript (~340 KiB) test_new_mem (1 MiB)
 #  - need an OS: test_system_usage test_net_*
 # BAREMETAL_THREAD_TESTS need real threads and only run with FreeRTOS.
-BAREMETAL_TESTS = test_aria test_async test_atomic test_chacha20_poly1305 \
+BAREMETAL_TESTS = test_aria test_async test_atomic test_buddy test_chacha20_poly1305 \
                   test_detachable_mode test_epoch_gc test_future_release test_ht \
                   test_limit test_logger test_lsh test_math test_math_advanced \
                   test_mem test_nice \
@@ -309,7 +309,7 @@ BAREMETAL_TESTS = test_aria test_async test_atomic test_chacha20_poly1305 \
                   test_table test_timing test_track_mem
 BAREMETAL_THREAD_TESTS = test_epoch_grace test_ringbuf test_sharded_sched \
                          test_thread test_worker_abort test_worker_dirty_recovery
-BM_TEST_CFLAGS ?= -DTEST_PQ_STRESS_N=1000 -DTEST_PRIO_ZERO_N=16
+BM_TEST_CFLAGS ?= -DTEST_PQ_STRESS_N=1000
 ifeq ($(PLATFORM),freertos)
 BM_TESTS ?= $(BAREMETAL_TESTS) $(BAREMETAL_THREAD_TESTS)
 else

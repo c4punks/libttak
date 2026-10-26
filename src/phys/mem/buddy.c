@@ -403,9 +403,19 @@ static inline ttak_buddy_block_t *buddy_pair(ttak_buddy_block_t *block, uint8_t 
     return (ttak_buddy_block_t *)(block->segment->start + pair_offset);
 }
 
+/* With anti_fragmentation (static pools), each free list stays sorted by
+ * address, so allocations pack toward the low end and the high end stays
+ * whole for large blocks. LIFO order instead scatters small blocks across
+ * the pool until no large block can coalesce. */
 static void list_push(uint8_t order, ttak_buddy_block_t *block) {
-    block->next = g_zone.free_lists[order];
-    g_zone.free_lists[order] = block;
+    ttak_buddy_block_t **link = &g_zone.free_lists[order];
+    if (g_zone.anti_fragmentation) {
+        while (*link && (uintptr_t)*link < (uintptr_t)block) {
+            link = &(*link)->next;
+        }
+    }
+    block->next = *link;
+    *link = block;
     block->order = order;
     block->in_use = 0;
     mark_order_nonempty(order);
@@ -635,4 +645,14 @@ void ttak_mem_buddy_free(void *ptr) {
     block->owner_tag = 0;
     block->call_safety = 0;
     ttak_buddy_cleanup(block);
+}
+
+void ttak_mem_buddy_get_stats(ttak_mem_buddy_stats_t *out) {
+    if (!out) return;
+    buddy_lock();
+    uint64_t mask = atomic_load_explicit(&g_free_mask, memory_order_relaxed);
+    out->capacity = buddy_capacity();
+    out->bytes_in_use = atomic_load_explicit(&g_zone.bytes_in_use, memory_order_relaxed);
+    out->largest_free = mask ? order_size(ttak_buddy_msb64(mask)) : 0;
+    buddy_unlock();
 }

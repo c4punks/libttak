@@ -41,6 +41,13 @@ typedef struct ttak_mem_req {
     uint32_t flags;          /**< Reserved; set to 0. */
 } ttak_mem_req_t;
 
+/** @brief Snapshot of the buddy pool, from ttak_mem_buddy_get_stats(). */
+typedef struct ttak_mem_buddy_stats {
+    size_t capacity;      /**< Bytes managed by the pool. */
+    size_t bytes_in_use;  /**< Bytes in allocated blocks, headers and rounding included. */
+    size_t largest_free;  /**< Largest free block; requests (plus a header) up to this fit. */
+} ttak_mem_buddy_stats_t;
+
 /**
  * @brief Initialises the buddy allocator over a caller-supplied memory region.
  *
@@ -72,6 +79,16 @@ void *ttak_mem_buddy_alloc(const ttak_mem_req_t *req);
  * @param ptr Pointer returned by ttak_mem_buddy_alloc().
  */
 void ttak_mem_buddy_free(void *ptr);
+
+/**
+ * @brief Reports pool usage and fragmentation.
+ *
+ * A largest_free well below capacity - bytes_in_use means the free space is
+ * split into small blocks.
+ *
+ * @param out Receives the snapshot.
+ */
+void ttak_mem_buddy_get_stats(ttak_mem_buddy_stats_t *out);
 
 #ifdef __cplusplus
 }
