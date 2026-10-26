@@ -39,6 +39,11 @@
 #include <ttak/types/ttak_compiler.h>
 #include <ttak/compat/baremetal.h>
 #include <stdalign.h>
+#if defined(__TINYC__) && defined(_Alignas)
+/* TinyCC's <stdalign.h> maps _Alignas to an aligned attribute, which it
+ * ignores on struct members; its built-in _Alignas keyword works. */
+#undef _Alignas
+#endif
 #include <ttak/compat/pthread.h>
 
 /* Owner handle used by ttak_mem_unuse(); full definition is in <ttak/mem/owner.h>. */

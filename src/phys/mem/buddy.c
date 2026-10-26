@@ -40,15 +40,21 @@ typedef struct ttak_buddy_segment {
     uint8_t owns_buffer;
 } ttak_buddy_segment_t;
 
-/* Payloads follow this header, so it carries the ttak_mem header's alignment. */
 typedef struct ttak_buddy_block {
-    _Alignas(TTAK_MEM_HEADER_ALIGN) struct ttak_buddy_block *next;
+    struct ttak_buddy_block *next;
     ttak_buddy_segment_t *segment;
     uint32_t owner_tag;
     uint32_t call_safety;
     uint8_t order;
     uint8_t in_use;
 } ttak_buddy_block_t;
+
+/* Payloads start this far into a block, which keeps them aligned to
+ * TTAK_MEM_HEADER_ALIGN: blocks sit at multiples of 64 bytes from an
+ * aligned segment start. Padded by hand because TinyCC drops _Alignas on
+ * struct members. */
+#define TTAK_BUDDY_HEADER_SIZE \
+    ((sizeof(ttak_buddy_block_t) + TTAK_MEM_HEADER_ALIGN - 1) & ~((size_t)TTAK_MEM_HEADER_ALIGN - 1))
 
 typedef struct ttak_buddy_zone {
     ttak_buddy_block_t *free_lists[TTAK_BUDDY_MAX_ORDER + 1];
@@ -197,9 +203,17 @@ static void buddy_release_owned_segments_locked(void) {
 
 static bool buddy_add_segment_locked(void *pool_start, size_t pool_len, uint8_t owns_buffer) {
     size_t min_block = order_size(TTAK_BUDDY_MIN_ORDER);
-    if (!pool_start || pool_len < min_block || g_zone.segment_count >= TTAK_BUDDY_MAX_SEGMENTS) {
+    if (!pool_start || g_zone.segment_count >= TTAK_BUDDY_MAX_SEGMENTS) {
         return false;
     }
+    /* Start on a min_block boundary (heap segments already do), whatever
+     * alignment the caller's buffer got. */
+    size_t skip = (size_t)(-(uintptr_t)pool_start & (min_block - 1U));
+    if (pool_len < skip + min_block) {
+        return false;
+    }
+    pool_start = (unsigned char *)pool_start + skip;
+    pool_len -= skip;
 
     ttak_buddy_segment_t *segment = &g_zone.segments[g_zone.segment_count++];
     segment->start = (unsigned char *)pool_start;
@@ -568,12 +582,12 @@ void *ttak_mem_buddy_alloc(const ttak_mem_req_t *req) {
     }
 
     /* Overflow check */
-    if (req->size_bytes > (size_t)-1 - sizeof(ttak_buddy_block_t)) {
+    if (req->size_bytes > (size_t)-1 - TTAK_BUDDY_HEADER_SIZE) {
         fprintf(stderr, "[Buddy] ENOMEM(12): Requested size %zu overflows size_t.\n", req->size_bytes);
         return NULL;
     }
 
-    size_t needed = req->size_bytes + sizeof(ttak_buddy_block_t);
+    size_t needed = req->size_bytes + TTAK_BUDDY_HEADER_SIZE;
     uint8_t order = order_for_size(needed);
     size_t block_bytes = order_size(order);
 
@@ -608,7 +622,7 @@ void *ttak_mem_buddy_alloc(const ttak_mem_req_t *req) {
                 needed, order, buddy_capacity(), g_zone.max_order);
         return NULL;
     }
-    return (void *)(block + 1);
+    return (unsigned char *)block + TTAK_BUDDY_HEADER_SIZE;
 }
 
 static void ttak_buddy_cleanup(void *ptr) {
@@ -641,7 +655,7 @@ static void ttak_buddy_cleanup(void *ptr) {
  * cost a pool block per retire node. */
 void ttak_mem_buddy_free(void *ptr) {
     if (!ptr) return;
-    ttak_buddy_block_t *block = ((ttak_buddy_block_t *)ptr) - 1;
+    ttak_buddy_block_t *block = (ttak_buddy_block_t *)((unsigned char *)ptr - TTAK_BUDDY_HEADER_SIZE);
     block->owner_tag = 0;
     block->call_safety = 0;
     ttak_buddy_cleanup(block);
