@@ -143,9 +143,16 @@ static ttak_net_lattice_t *global_default_lattice = NULL;
 static pthread_once_t lattice_once = PTHREAD_ONCE_INIT;
 
 static void lattice_init_default(void) {
+#if TTAK_PLATFORM_BAREMETAL
+    /* 16 slots of TTAK_LATTICE_SLOT_SIZE (256 KiB) exceed an MCU pool. With
+     * no default lattice, endpoints read straight from the socket even
+     * with TTAK_NET_ROLE_LATTICE_ACCEL. */
+    global_default_lattice = NULL;
+#else
     /* Auto-detect CPU count or use a safe default (4) for lattice dimension */
     uint32_t dim = 4;
     global_default_lattice = ttak_net_lattice_create(dim, ttak_get_tick_count());
+#endif
 }
 
 static ttak_net_lattice_t *ttak_net_lattice_head(ttak_net_lattice_t *lat) {

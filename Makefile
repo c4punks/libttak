@@ -108,6 +108,11 @@ endif
 #   FREERTOS_KERNEL_PATH  FreeRTOS-Kernel checkout (V11.x)
 #   FREERTOS_PORT         port directory under portable/ (GCC/ARM_CM4F)
 #   FREERTOS_CONFIG_DIR   directory holding FreeRTOSConfig.h
+#
+# NET=lwip (with PLATFORM=freertos) also builds the socket and I/O modules
+# on lwIP's BSD socket API:
+#   LWIP_PATH             lwIP checkout (2.1 or later)
+#   LWIP_CONFIG_DIR       directory holding lwipopts.h and arch/cc.h
 PLATFORM ?= hosted
 ifneq ($(filter baremetal freertos,$(PLATFORM)),)
 CROSS_COMPILE ?= arm-none-eabi-
@@ -135,6 +140,18 @@ FREERTOS_INCLUDES = -I$(FREERTOS_CONFIG_DIR) -I$(FREERTOS_KERNEL_PATH)/include \
                     -I$(FREERTOS_KERNEL_PATH)/portable/$(FREERTOS_PORT)
 CFLAGS += -DTTAK_PLATFORM_FREERTOS=1 $(FREERTOS_INCLUDES)
 endif
+ifeq ($(NET),lwip)
+ifneq ($(PLATFORM),freertos)
+$(error NET=lwip needs PLATFORM=freertos)
+endif
+ifeq ($(LWIP_PATH),)
+$(error NET=lwip needs LWIP_PATH=<lwIP checkout>)
+endif
+LWIP_CONFIG_DIR ?= tests/baremetal/lwip
+LWIP_INCLUDES = -I$(LWIP_CONFIG_DIR) -I$(LWIP_PATH)/src/include \
+                -I$(LWIP_PATH)/contrib/ports/freertos/include
+CFLAGS += -DTTAK_NET_LWIP=1 $(LWIP_INCLUDES)
+endif
 # ------------------------------------------------------------------------
 
 PREFIX ?= /usr/local
@@ -155,10 +172,12 @@ C_BASE_ACCEL_SRCS = src/accel/accel_cpu.c src/accel/ttak_accel_dispatch.c
 endif
 SRCS += $(C_BASE_ACCEL_SRCS)
 
-# Bare-metal has no sockets, poll(), /proc or __int128 (accel CPU backend).
-BAREMETAL_EXCLUDED_SRCS = src/net/endpoint.c src/net/poller.c src/net/session.c \
-                          src/net/view.c src/io/async.c src/io/io.c src/io/zerocopy.c \
-                          src/stats/system_usage.c
+# Bare-metal has no /proc or __int128 (accel CPU backend), and no sockets
+# or poll() unless NET=lwip.
+BAREMETAL_SOCKET_SRCS = src/net/endpoint.c src/net/poller.c src/net/session.c \
+                        src/net/view.c src/io/async.c src/io/io.c src/io/zerocopy.c
+BAREMETAL_EXCLUDED_SRCS = src/stats/system_usage.c \
+                          $(if $(filter lwip,$(NET)),,$(BAREMETAL_SOCKET_SRCS))
 ifneq ($(filter baremetal freertos,$(PLATFORM)),)
 SRC_DIRS += src/platform
 SRCS = $(filter-out $(BAREMETAL_EXCLUDED_SRCS),$(foreach dir,$(SRC_DIRS),$(wildcard $(dir)/*.c)))
@@ -291,14 +310,16 @@ tests/test_%: tests/test_%.c $(LIB)
 # scripts/baremetal/run_qemu.sh or scripts/baremetal/run_stm32.py.
 BOARD ?= mps2_an500
 BM_DIR = tests/baremetal
-BM_OUT = $(BM_DIR)/build/$(BOARD)$(if $(filter freertos,$(PLATFORM)),-freertos)
+BM_OUT = $(BM_DIR)/build/$(BOARD)$(if $(filter freertos,$(PLATFORM)),-freertos)$(if $(filter lwip,$(NET)),-lwip)
 BM_HARNESS = $(BM_DIR)/startup_cortex_m.c $(BM_DIR)/syscalls.c $(BM_DIR)/board_$(BOARD).c
 BM_LDFLAGS = $(MCU_FLAGS) -nostartfiles -T$(BM_DIR)/$(BOARD).ld -L$(BM_DIR) \
              --specs=nosys.specs -Wl,--gc-sections
 # Tests that fit a 512 KiB MCU. Never built for bare metal:
 #  - need desktop-sized memory: test_bigscript (~340 KiB) test_new_mem (1 MiB)
-#  - need an OS: test_system_usage test_net_*
-# BAREMETAL_THREAD_TESTS need real threads and only run with FreeRTOS.
+#  - need an OS: test_system_usage, and test_net_* other than
+#    BAREMETAL_NET_TESTS
+# BAREMETAL_THREAD_TESTS need real threads and only run with FreeRTOS;
+# BAREMETAL_NET_TESTS need sockets and only run with NET=lwip.
 BAREMETAL_TESTS = test_aria test_async test_atomic test_buddy test_chacha20_poly1305 \
                   test_detachable_mode test_epoch_gc test_future_release test_ht \
                   test_limit test_logger test_lsh test_math test_math_advanced \
@@ -309,9 +330,11 @@ BAREMETAL_TESTS = test_aria test_async test_atomic test_buddy test_chacha20_poly
                   test_table test_timing test_track_mem
 BAREMETAL_THREAD_TESTS = test_epoch_grace test_ringbuf test_sharded_sched \
                          test_thread test_worker_abort test_worker_dirty_recovery
+BAREMETAL_NET_TESTS = test_net_tcp
 BM_TEST_CFLAGS ?= -DTEST_PQ_STRESS_N=1000
 ifeq ($(PLATFORM),freertos)
-BM_TESTS ?= $(BAREMETAL_TESTS) $(BAREMETAL_THREAD_TESTS)
+BM_TESTS ?= $(BAREMETAL_TESTS) $(BAREMETAL_THREAD_TESTS) \
+            $(if $(filter lwip,$(NET)),$(BAREMETAL_NET_TESTS))
 else
 BM_TESTS ?= $(BAREMETAL_TESTS)
 endif
@@ -326,6 +349,18 @@ FREERTOS_KERNEL_SRCS = $(addprefix $(FREERTOS_KERNEL_PATH)/,tasks.c queue.c list
                          portable/$(FREERTOS_PORT)/port.c portable/MemMang/heap_4.c)
 FREERTOS_KERNEL_OBJS = $(patsubst $(FREERTOS_KERNEL_PATH)/%.c,$(BM_OUT)/kernel/%.o,$(FREERTOS_KERNEL_SRCS))
 BM_RTOS_OBJS = $(FREERTOS_KERNEL_OBJS) $(BM_OUT)/freertos_main.o
+ifeq ($(NET),lwip)
+# freertos_main.c starts lwIP's tcpip thread before the test runs.
+LWIP_SRCS = $(wildcard $(LWIP_PATH)/src/core/*.c $(LWIP_PATH)/src/core/ipv4/*.c \
+                       $(LWIP_PATH)/src/api/*.c) \
+            $(LWIP_PATH)/contrib/ports/freertos/sys_arch.c
+LWIP_OBJS = $(patsubst $(LWIP_PATH)/%.c,$(BM_OUT)/lwip/%.o,$(LWIP_SRCS))
+BM_RTOS_OBJS += $(LWIP_OBJS)
+
+$(BM_OUT)/lwip/%.o: $(LWIP_PATH)/%.c
+	@mkdir -p $(dir $@)
+	$(CC) $(MCU_FLAGS) $(BAREMETAL_OPT) -ffunction-sections -fdata-sections $(FREERTOS_INCLUDES) $(LWIP_INCLUDES) -c $< -o $@
+endif
 
 $(BM_OUT)/kernel/%.o: $(FREERTOS_KERNEL_PATH)/%.c
 	@mkdir -p $(dir $@)

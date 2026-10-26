@@ -19,6 +19,11 @@
 typedef int ttak_io_ssize_t;
 #define ttak_io_safe_read  _read
 #define ttak_io_safe_write _write
+#elif TTAK_NET_LWIP
+#include "../../internal/ttak/net_lwip.h"
+typedef ssize_t ttak_io_ssize_t;
+#define ttak_io_safe_read  read
+#define ttak_io_safe_write write
 #else
 #include <unistd.h>
 typedef ssize_t ttak_io_ssize_t;

@@ -9,7 +9,12 @@
 #include <stdio.h>
 #include "FreeRTOS.h"
 #include "task.h"
+#include "semphr.h"
 #include "board.h"
+#include <ttak/compat/baremetal.h>
+#if TTAK_NET_LWIP
+#include "lwip/tcpip.h"
+#endif
 
 #ifndef TTAK_TEST_TASK_STACK_BYTES
 #define TTAK_TEST_TASK_STACK_BYTES (32u * 1024u)
@@ -17,8 +22,25 @@
 
 int ttak_test_main(void);
 
+#if TTAK_NET_LWIP
+static void lwip_ready(void *arg) {
+    xSemaphoreGive((SemaphoreHandle_t)arg);
+}
+
+/* Starts lwIP's tcpip thread; its loopback interface is all the tests use. */
+static void start_lwip(void) {
+    SemaphoreHandle_t ready = xSemaphoreCreateBinary();
+    tcpip_init(lwip_ready, ready);
+    xSemaphoreTake(ready, portMAX_DELAY);
+    vSemaphoreDelete(ready);
+}
+#endif
+
 static void test_task(void *param) {
     (void)param;
+#if TTAK_NET_LWIP
+    start_lwip();
+#endif
     board_exit(ttak_test_main());
 }
 

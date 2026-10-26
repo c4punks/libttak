@@ -273,8 +273,9 @@ What changes on bare metal:
   ```
 
 - **Not built:** sockets and `poll()` I/O (`net/endpoint`, `net/poller`,
-  `net/session`, `net/view`, `io/async`, `io/io`, `io/zerocopy`), `/proc`
-  statistics, and the `__int128` accelerator backend.
+  `net/session`, `net/view`, `io/async`, `io/io`, `io/zerocopy`) unless you
+  build with FreeRTOS and lwIP (see [lwIP networking](#lwip-networking)),
+  `/proc` statistics, and the `__int128` accelerator backend.
 
 ## FreeRTOS
 
@@ -317,6 +318,45 @@ Your `FreeRTOSConfig.h` needs:
   `ttak_mem_usage_bytes()` reports the bytes held by live `ttak_mem`
   allocations, so you can check for growth.
 
+## lwIP networking
+
+`NET=lwip` (with `PLATFORM=freertos`) builds the socket and I/O modules
+(`net/endpoint`, `net/poller`, `net/session`, `net/view`, `io/*`) on lwIP's
+BSD socket API:
+
+```sh
+make PLATFORM=freertos NET=lwip FREERTOS_KERNEL_PATH=... \
+     LWIP_PATH=/path/to/lwip LWIP_CONFIG_DIR=/path/to/your/app  # holds lwipopts.h, arch/cc.h
+```
+
+Compile your firmware with `-DTTAK_NET_LWIP=1` as well. The application
+brings up lwIP as usual: it calls `tcpip_init()` and adds its NIC driver's
+netif. libttak only uses sockets. Your `lwipopts.h` needs:
+
+```c
+#define LWIP_SOCKET                  1
+#define LWIP_COMPAT_SOCKETS          1   /* socket(), poll(), ... -> lwip_*() */
+#define LWIP_POSIX_SOCKETS_IO_NAMES  1   /* read(), write(), close() on sockets */
+#define LWIP_SOCKET_POLL             1
+#define SO_REUSE                     1   /* ttak_net_endpoint_set_reuse */
+#define LWIP_SO_RCVBUF               1   /* ttak_net_endpoint_set_buffer_sizes */
+```
+
+and `arch/cc.h` should set `LWIP_ERRNO_STDINCLUDE 1` (and, with newlib,
+`LWIP_TIMEVAL_PRIVATE 0`) so lwIP reports errors with newlib's errno values.
+`tests/baremetal/lwip` has a working configuration.
+
+lwIP differs from POSIX sockets in a few places:
+
+- The send buffer size is fixed at build time (`TCP_SND_BUF`), so
+  `ttak_net_endpoint_set_buffer_sizes()` applies only the receive size.
+  `SO_REUSEPORT` is not supported.
+- `poll()` never reports `POLLHUP`. A closed peer shows up as readable, and
+  the read returns 0.
+- No `AF_UNIX` sockets or `socketpair()`.
+- Lattice acceleration (`TTAK_NET_ROLE_LATTICE_ACCEL`) is off on bare
+  metal, because the default lattice takes 256 KiB.
+
 The unit tests run on hardware and in QEMU:
 
 ```sh
@@ -331,7 +371,14 @@ scripts/baremetal/run_stm32.py tests/baremetal/build/stm32f769i_disco/*.elf
 # FreeRTOS, including the threaded tests (images land in <board>-freertos/)
 make PLATFORM=freertos FREERTOS_KERNEL_PATH=... BOARD=mps2_an500 baremetal-tests
 scripts/baremetal/run_qemu.sh tests/baremetal/build/mps2_an500-freertos/*.elf
+
+# FreeRTOS + lwIP, adding the socket tests over lwIP's loopback interface
+make PLATFORM=freertos NET=lwip FREERTOS_KERNEL_PATH=... LWIP_PATH=... BOARD=mps2_an500 baremetal-tests
+scripts/baremetal/run_qemu.sh tests/baremetal/build/mps2_an500-freertos-lwip/*.elf
 ```
+
+Run `make clean` when switching `PLATFORM` or `NET`: `lib/libttak.a` is
+shared between configurations.
 
 ---
 

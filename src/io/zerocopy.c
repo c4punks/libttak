@@ -18,6 +18,9 @@
 #ifdef _WIN32
 #include <winsock2.h>
 typedef int ttak_io_ssize_t;
+#elif TTAK_NET_LWIP
+#include "../../internal/ttak/net_lwip.h"
+typedef ssize_t ttak_io_ssize_t;
 #else
 #include <sys/socket.h>
 #include <sys/uio.h>
