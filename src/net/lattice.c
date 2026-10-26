@@ -125,7 +125,7 @@ static inline void ttak_net_lattice_copy_bytes(uint8_t *dst, const uint8_t *src,
 }
 #endif
 
-#if defined(__TINYC__)
+#if TTAK_NO_NATIVE_TLS
 static uint32_t tls_worker_id = 0;
 #else
 static _Thread_local uint32_t tls_worker_id = 0;

@@ -13,6 +13,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <time.h>
+#include <ttak/compat/baremetal.h>
 
 #if defined(_MSC_VER)
 #  include <intrin.h>

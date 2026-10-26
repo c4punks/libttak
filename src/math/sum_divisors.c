@@ -3,7 +3,7 @@
 #include <ttak/mem/mem.h>
 #include <ttak/types/fixed.h>
 
-#if defined(__TINYC__)
+#if TTAK_NO_NATIVE_TLS
 #define SUMDIV_THREAD_LOCAL
 #else
 #define SUMDIV_THREAD_LOCAL _Thread_local

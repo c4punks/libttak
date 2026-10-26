@@ -97,6 +97,29 @@ endif
 endif
 # ------------------------------------------------------------------------
 
+# ---- Bare-metal toolchain (PLATFORM=baremetal) -------------------------
+# Cross-builds lib/libttak.a for OS-less microcontrollers (newlib, no RTOS).
+# MCU_FLAGS selects the core; the default is Cortex-M7 with a
+# double-precision FPU (STM32F76x/F77x, e.g. STM32F769I-DISCO).
+PLATFORM ?= hosted
+ifeq ($(PLATFORM),baremetal)
+CROSS_COMPILE ?= arm-none-eabi-
+ifneq ($(filter default undefined environment,$(origin CC)),)
+CC = $(CROSS_COMPILE)gcc
+endif
+ifneq ($(filter default undefined environment,$(origin AR)),)
+AR = $(CROSS_COMPILE)ar
+endif
+MCU_FLAGS ?= -mcpu=cortex-m7 -mthumb -mfloat-abi=hard -mfpu=fpv5-d16
+BAREMETAL_OPT ?= -Os -g
+override EMBEDDED := 1
+CFLAGS = -std=c17 -Wall -Wextra -Iinclude $(MCU_FLAGS) $(BAREMETAL_OPT) \
+         -ffunction-sections -fdata-sections \
+         -DTTAK_PLATFORM_BAREMETAL=1 -DEMBEDDED=1 $(EXTRA_CFLAGS)
+LDFLAGS = $(MCU_FLAGS) -Wl,--gc-sections $(EXTRA_LDFLAGS)
+endif
+# ------------------------------------------------------------------------
+
 PREFIX ?= /usr/local
 LIBDIR = $(PREFIX)/lib
 INCDIR = $(PREFIX)/include
@@ -114,6 +137,15 @@ else
 C_BASE_ACCEL_SRCS = src/accel/accel_cpu.c src/accel/ttak_accel_dispatch.c
 endif
 SRCS += $(C_BASE_ACCEL_SRCS)
+
+# Bare-metal has no sockets, poll(), /proc or __int128 (accel CPU backend).
+BAREMETAL_EXCLUDED_SRCS = src/net/endpoint.c src/net/poller.c src/net/session.c \
+                          src/net/view.c src/io/async.c src/io/io.c src/io/zerocopy.c \
+                          src/stats/system_usage.c
+ifeq ($(PLATFORM),baremetal)
+SRC_DIRS += src/platform
+SRCS = $(filter-out $(BAREMETAL_EXCLUDED_SRCS),$(foreach dir,$(SRC_DIRS),$(wildcard $(dir)/*.c)))
+endif
 C_OPTIONAL_SRCS =
 CUDA_SRCS =
 ROCM_SRCS =
@@ -236,12 +268,46 @@ examples/shared-memory/shared_example: examples/shared-memory/shared_example.c $
 tests/test_%: tests/test_%.c $(LIB)
 	$(CC) $(CFLAGS) $< -o $@ $(LIB) $(LDFLAGS)
 
+# ---- Bare-metal unit tests (PLATFORM=baremetal) -------------------------
+# Builds one firmware image per single-threaded unit test for BOARD, using
+# the startup/syscall harness in tests/baremetal. Run them with
+# scripts/baremetal/run_qemu.sh or scripts/baremetal/run_stm32.py.
+BOARD ?= mps2_an500
+BM_DIR = tests/baremetal
+BM_OUT = $(BM_DIR)/build/$(BOARD)
+BM_HARNESS = $(BM_DIR)/startup_cortex_m.c $(BM_DIR)/syscalls.c $(BM_DIR)/board_$(BOARD).c
+BM_LDFLAGS = $(MCU_FLAGS) -nostartfiles -T$(BM_DIR)/$(BOARD).ld -L$(BM_DIR) \
+             --specs=nosys.specs -Wl,--gc-sections
+# Single-threaded tests that fit a 512 KiB MCU. Not built here:
+#  - need real threads: test_epoch_grace test_ringbuf test_sharded_sched
+#    test_thread test_worker_abort test_worker_dirty_recovery
+#  - need desktop-sized memory: test_bigscript (~340 KiB) test_new_mem (1 MiB)
+#  - need an OS: test_system_usage test_net_*
+BAREMETAL_TESTS = test_aria test_async test_atomic test_chacha20_poly1305 \
+                  test_detachable_mode test_epoch_gc test_ht test_limit test_logger \
+                  test_lsh test_math test_math_advanced test_mem test_nice \
+                  test_owner_complex test_pool test_priority test_security \
+                  test_security_hardening test_security_util test_seed test_shared \
+                  test_simple_ds test_smart_sched test_stats test_status test_sync \
+                  test_table test_timing test_track_mem
+BM_TEST_CFLAGS ?= -DTEST_PQ_STRESS_N=1000
+BM_TESTS ?= $(BAREMETAL_TESTS)
+BM_ELFS = $(patsubst %,$(BM_OUT)/%.elf,$(BM_TESTS))
+
+baremetal-tests: $(LIB) $(BM_ELFS)
+
+# Tests build as gnu17, the arm-none-eabi default most firmware uses; this
+# also covers headers under newlib's POSIX visibility.
+$(BM_OUT)/%.elf: tests/%.c $(BM_HARNESS) $(LIB)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -std=gnu17 $(BM_TEST_CFLAGS) -Itests $< $(BM_HARNESS) -o $@ $(LIB) $(BM_LDFLAGS) -lm
+
 directories:
 	@mkdir -p $(foreach dir,$(SRC_DIRS),obj/$(patsubst src/%,%,$(dir))) obj/accel lib
 
 clean:
-	rm -rf obj lib tests/*.d
-	find tests/ -type f ! -name "*.c" ! -name "*.h" -delete
+	rm -rf obj lib tests/*.d $(BM_DIR)/build
+	find tests/ -maxdepth 1 -type f ! -name "*.c" ! -name "*.h" -delete
 	rm -f examples/mersenne-prime/mersenne_explorer examples/mersenne-prime/*.o
 	rm -f examples/shared-memory/shared_example
 	rm -rf a.out

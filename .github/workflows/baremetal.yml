@@ -1,0 +1,61 @@
+name: Bare-metal (Cortex-M)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - core: cortex-m0plus
+            mcu: -mcpu=cortex-m0plus -mthumb -mfloat-abi=soft
+          - core: cortex-m3
+            mcu: -mcpu=cortex-m3 -mthumb -mfloat-abi=soft
+          - core: cortex-m4f
+            mcu: -mcpu=cortex-m4 -mthumb -mfloat-abi=hard -mfpu=fpv4-sp-d16
+          - core: cortex-m33
+            mcu: -mcpu=cortex-m33 -mthumb -mfloat-abi=hard -mfpu=fpv5-sp-d16
+          - core: cortex-m7
+            mcu: -mcpu=cortex-m7 -mthumb -mfloat-abi=hard -mfpu=fpv5-d16
+    name: build (${{ matrix.core }})
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-arm-none-eabi libnewlib-arm-none-eabi
+
+      - name: Build libttak.a
+        run: make PLATFORM=baremetal MCU_FLAGS="${{ matrix.mcu }}"
+
+      - name: Verify static archive exists
+        run: test -f lib/libttak.a
+
+  qemu-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    name: unit tests (QEMU mps2-an500, Cortex-M7)
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install toolchain and QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-arm-none-eabi libnewlib-arm-none-eabi qemu-system-arm
+
+      - name: Build test images
+        run: make PLATFORM=baremetal BOARD=mps2_an500 baremetal-tests
+
+      - name: Run tests
+        run: scripts/baremetal/run_qemu.sh tests/baremetal/build/mps2_an500/*.elf
+        timeout-minutes: 15

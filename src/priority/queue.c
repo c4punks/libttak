@@ -5,19 +5,50 @@
 #include <stdio.h>
 #include <string.h>
 
+/* Element encoding: (priority, slot + 1) packed into one uintptr_t. With
+ * 64-bit pointers each half gets 32 bits. 32-bit targets split 16/16, so
+ * priorities saturate to int16_t and a queue holds at most 65535 items. */
+#if UINTPTR_MAX > 0xFFFFFFFFu
+#define Q_HALF_BITS 32
+typedef int32_t q_prio_t;
+#define Q_PRIO_MIN INT32_MIN
+#define Q_PRIO_MAX INT32_MAX
+#else
+#define Q_HALF_BITS 16
+typedef int16_t q_prio_t;
+#define Q_PRIO_MIN INT16_MIN
+#define Q_PRIO_MAX INT16_MAX
+#endif
+#define Q_HALF_MASK ((((uintptr_t)1) << Q_HALF_BITS) - 1)
+
+static inline uintptr_t q_encode(int priority, size_t slot) {
+    if (priority < Q_PRIO_MIN) priority = Q_PRIO_MIN;
+    if (priority > Q_PRIO_MAX) priority = Q_PRIO_MAX;
+    uintptr_t prio_bits = (uintptr_t)(q_prio_t)priority & Q_HALF_MASK;
+    return (prio_bits << Q_HALF_BITS) | ((uintptr_t)(slot + 1) & Q_HALF_MASK);
+}
+
+static inline q_prio_t q_decode_prio(const void *element) {
+    return (q_prio_t)(((uintptr_t)element >> Q_HALF_BITS) & Q_HALF_MASK);
+}
+
+static inline size_t q_decode_slot(const void *element) {
+    return (size_t)((uintptr_t)element & Q_HALF_MASK) - 1;
+}
+
 /**
  * @brief Max-heap comparator on the priority score.
  *
- * Heap elements encode (priority, item slot) into the pointer value:
- * the upper 32 bits hold the sign-preserved priority and the lower 32
- * bits hold the index into q->items.  The comparator orders by priority
+ * Heap elements encode (priority, item slot) into the pointer value
+ * (see q_encode): the upper half holds the sign-preserved priority and
+ * the lower half holds the index into q->items.  The comparator orders by priority
  * so that the highest priority score sits at the heap root, matching
  * the pop order of the former sorted list (higher priority value
  * dequeued first).
  */
 static int q_heap_cmp(const void *a, const void *b) {
-    int32_t pa = (int32_t)((uintptr_t)a >> 32);
-    int32_t pb = (int32_t)((uintptr_t)b >> 32);
+    q_prio_t pa = q_decode_prio(a);
+    q_prio_t pb = q_decode_prio(b);
     return (pa > pb) - (pa < pb);
 }
 
@@ -58,6 +89,12 @@ static void q_push(struct __internal_ttak_proc_priority_queue_t *q, ttak_task_t 
     if (q->free_count > 0) {
         slot = q->free_slots[--q->free_count];
     } else {
+        if (q->items_count >= Q_HALF_MASK) {
+#ifdef TTAK_DEBUG_QUEUE
+            fprintf(stderr, "[queue] push failed: slot space exhausted\n");
+#endif
+            return;
+        }
         if (q->items_count == q->items_cap) {
             void *grown = q_grow_buffer(q->items, q->items_count, &q->items_cap, sizeof(*q->items));
             if (!grown) {
@@ -75,7 +112,7 @@ static void q_push(struct __internal_ttak_proc_priority_queue_t *q, ttak_task_t 
     /* Slot + 1 keeps the encoded element non-NULL even for priority 0 at
      * slot 0; the heap uses a NULL return to signal emptiness, so a NULL
      * payload would be dropped and desync q->size from the heap. */
-    void *element = (void *)(((uintptr_t)(uint32_t)(int32_t)priority << 32) | (uintptr_t)(uint32_t)(slot + 1));
+    void *element = (void *)q_encode(priority, slot);
     ttak_heap_tree_push(&q->heap, element, now);
     q->size++;
 }
@@ -93,7 +130,7 @@ static ttak_task_t *q_pop(struct __internal_ttak_proc_priority_queue_t *q, uint6
     /* Emptiness is determined by q->size above; the popped element is a
      * (priority, slot+1) encoding and is never NULL for a stored entry. */
     void *element = ttak_heap_tree_pop(&q->heap, now);
-    size_t slot = (size_t)(uint32_t)(uintptr_t)element - 1;
+    size_t slot = q_decode_slot(element);
     ttak_task_t *task = q->items[slot].task;
     if (q->free_count == q->free_cap) {
         void *grown = q_grow_buffer(q->free_slots, q->free_count, &q->free_cap, sizeof(*q->free_slots));

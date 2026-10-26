@@ -8,8 +8,8 @@ static void test_timing_basic(void) {
     usleep(10000); // 10ms
     uint64_t t2 = ttak_get_tick_count();
     
-    ASSERT(t1 > 0);
-    ASSERT(t2 >= t1);
+    /* Bare-metal clocks may start at 0, so check the elapsed time instead. */
+    ASSERT(t2 - t1 >= 10);
 }
 
 static void test_deadline_expiration(void) {

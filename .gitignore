@@ -18,3 +18,6 @@ core.*
 vgcore.*
 a.out
 fly.board.zip
+
+# bare-metal test images
+tests/baremetal/build/

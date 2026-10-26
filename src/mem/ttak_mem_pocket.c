@@ -16,7 +16,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
-#if defined(__TINYC__)
+#if TTAK_NO_NATIVE_TLS
 #include <ttak/compat/pthread.h>
 #endif
 
@@ -27,7 +27,7 @@
 /**
  * @brief Thread-local freelists for each pocket size class.
  */
-#if defined(__TINYC__)
+#if TTAK_NO_NATIVE_TLS
 static pthread_once_t pocket_tls_once = PTHREAD_ONCE_INIT;
 static pthread_key_t pocket_tls_key;
 
@@ -71,7 +71,7 @@ static void *pocket_remote_freelists[TTAK_NUM_POCKET_FREELISTS] = {0};
 
 #if !TTAK_OS_MANAGED_MEMORY
 static pthread_mutex_t pocket_page_pool_lock = PTHREAD_MUTEX_INITIALIZER;
-static _Alignas(TTAK_POCKET_ALIGNMENT) uint8_t pocket_page_pool[TTAK_POCKET_PAGE_SIZE * 2048];
+static _Alignas(TTAK_POCKET_ALIGNMENT) uint8_t pocket_page_pool[TTAK_POCKET_PAGE_SIZE * TTAK_POCKET_PAGE_COUNT];
 static size_t pocket_page_pool_cursor = 0;
 #endif
 

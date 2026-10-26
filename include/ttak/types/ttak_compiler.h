@@ -7,6 +7,21 @@
 #define TTAK_COMPILER_H
 
 /**
+ * @brief 1 when _Thread_local cannot be used.
+ *
+ * TinyCC has no TLS support, and bare-metal targets have no thread pointer
+ * (__aeabi_read_tp). Such builds use the pthread-key or plain-static
+ * fallbacks wherever libttak keeps per-thread state.
+ */
+#ifndef TTAK_NO_NATIVE_TLS
+#  if defined(__TINYC__) || (defined(TTAK_PLATFORM_BAREMETAL) && TTAK_PLATFORM_BAREMETAL)
+#    define TTAK_NO_NATIVE_TLS 1
+#  else
+#    define TTAK_NO_NATIVE_TLS 0
+#  endif
+#endif
+
+/**
  * @brief Low-level CAS implementation for TinyCC.
  *
  * Injects raw assembly based on the target architecture to prevent undefined

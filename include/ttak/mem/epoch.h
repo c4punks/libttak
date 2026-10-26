@@ -47,7 +47,7 @@ void ttak_epoch_register_thread(void);
  */
 void ttak_epoch_deregister_thread(void);
 
-#if defined(__TINYC__) || defined(TTAK_EPOCH_FORCE_TLS_SHIM)
+#if TTAK_NO_NATIVE_TLS || defined(TTAK_EPOCH_FORCE_TLS_SHIM)
 extern ttak_thread_state_t *ttak_get_t_local_state(void);
 extern void ttak_set_t_local_state(ttak_thread_state_t *val);
 #define t_local_state ttak_get_t_local_state()
