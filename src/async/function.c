@@ -29,14 +29,14 @@ ttak_async_future_t ttak_async_call(ttak_task_func_t func,
     handle.future = ttak_promise_get_future(handle.promise);
     if (!handle.future) {
         ttak_async_cleanup_ctx(cleanup, ctx);
-        ttak_async_future_cleanup(&handle);
+        ttak_promise_destroy(handle.promise);
         return (ttak_async_future_t){0};
     }
 
     ttak_task_t *task = ttak_task_create(func, ctx, handle.promise, now);
     if (!task) {
         ttak_async_cleanup_ctx(cleanup, ctx);
-        ttak_async_future_cleanup(&handle);
+        ttak_promise_destroy(handle.promise);
         return (ttak_async_future_t){0};
     }
 
@@ -58,21 +58,9 @@ void ttak_async_future_cleanup(ttak_async_future_t *future) {
         return;
     }
 
-    uint64_t now = ttak_get_tick_count();
-    if (future->future) {
-        ttak_future_t *safe_future = ttak_mem_access(future->future, now);
-        if (safe_future) {
-            pthread_mutex_destroy(&safe_future->mutex);
-            pthread_cond_destroy(&safe_future->cond);
-            safe_future->ready = false;
-            safe_future->result = NULL;
-        }
-        ttak_mem_free(future->future);
-        future->future = NULL;
-    }
-
-    if (future->promise) {
-        ttak_mem_free(future->promise);
-        future->promise = NULL;
-    }
+    /* The task may still be running: release defers the free until it
+     * has fulfilled the promise. */
+    ttak_future_release(future->future);
+    future->future = NULL;
+    future->promise = NULL;
 }

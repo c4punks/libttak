@@ -32,7 +32,7 @@ struct __internal_ttak_proc_priority_queue_t {
     size_t cap;
 
     void (*init)(struct __internal_ttak_proc_priority_queue_t *q);
-    void (*push)(struct __internal_ttak_proc_priority_queue_t *q, ttak_task_t *task, int priority, uint64_t now);
+    _Bool (*push)(struct __internal_ttak_proc_priority_queue_t *q, ttak_task_t *task, int priority, uint64_t now); /**< false: out of memory, task not queued */
     ttak_task_t *(*pop)(struct __internal_ttak_proc_priority_queue_t *q, uint64_t now);
     ttak_task_t *(*pop_blocking)(struct __internal_ttak_proc_priority_queue_t *q, pthread_mutex_t *mutex, pthread_cond_t *cond, uint64_t now);
     size_t (*get_size)(struct __internal_ttak_proc_priority_queue_t *q);
@@ -40,5 +40,10 @@ struct __internal_ttak_proc_priority_queue_t {
 };
 
 void ttak_priority_queue_init(struct __internal_ttak_proc_priority_queue_t *q);
+
+/**
+ * @brief Releases the queue's internal buffers. Queued tasks are not freed.
+ */
+void ttak_priority_queue_destroy(struct __internal_ttak_proc_priority_queue_t *q);
 
 #endif // __TTAK_INTERNAL_QUEUE_H__

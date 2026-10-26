@@ -16,5 +16,6 @@ int main(void) {
     ttak_promise_set_value(promise, (void *)"promise delivered", now);
     char *result = (char *)ttak_future_get(future);
     printf("future result: %s\n", result);
+    ttak_future_release(future); /* frees the future and its promise */
     return 0;
 }

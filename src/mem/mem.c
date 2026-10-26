@@ -773,6 +773,8 @@ void **tt_autoclean_and_inspect(uint64_t now, size_t *count_out) {
 
 _Bool ttak_mem_is_pressure_high(void) { return ttak_atomic_read64(&global_mem_usage) > TTAK_MEM_HIGH_WATERMARK; }
 
+uint64_t ttak_mem_usage_bytes(void) { return ttak_atomic_read64(&global_mem_usage); }
+
 void save_current_progress(const char *filename, const void *data, size_t size) {
     char temp_name[256]; snprintf(temp_name, sizeof(temp_name), "%s.tmp", filename);
     int fd = open(temp_name, O_WRONLY | O_CREAT | O_TRUNC, 0644);

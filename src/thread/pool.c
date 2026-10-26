@@ -271,9 +271,8 @@ ttak_future_t *ttak_thread_pool_submit_task(ttak_thread_pool_t *pool, void *(*fu
 
     ttak_task_t *task = ttak_task_create((ttak_task_func_t)func, arg, promise, now);
     if (!task) {
-        ttak_mem_free(promise->future);
-        ttak_mem_free(promise); /* destroys promise here. */
-        return NULL; 
+        ttak_promise_destroy(promise);
+        return NULL;
     }
 
     /* Apply smart scheduling adjustment */
@@ -281,8 +280,7 @@ ttak_future_t *ttak_thread_pool_submit_task(ttak_thread_pool_t *pool, void *(*fu
 
     if (!ttak_thread_pool_schedule_task(pool, task, adjusted_priority, now)) {
         ttak_task_destroy(task, now);
-        ttak_mem_free(promise->future);
-        ttak_mem_free(promise);
+        ttak_promise_destroy(promise);
         return NULL;
     }
 
@@ -303,7 +301,7 @@ ttak_future_t *ttak_thread_pool_submit_task(ttak_thread_pool_t *pool, void *(*fu
  * @param task     Task instance created earlier.
  * @param priority Priority hint.
  * @param now      Timestamp for queue bookkeeping.
- * @return true if scheduled, false if the pool is shutting down.
+ * @return true if scheduled, false if the pool is shutting down or out of memory.
  */
 _Bool ttak_thread_pool_schedule_task(ttak_thread_pool_t *pool, ttak_task_t *task, int priority, uint64_t now) {
     if (!pool || !task) return 0;
@@ -321,7 +319,10 @@ _Bool ttak_thread_pool_schedule_task(ttak_thread_pool_t *pool, ttak_task_t *task
         return 0;
     }
 
-    shard->queue.push(&shard->queue, task, priority, now);
+    if (!shard->queue.push(&shard->queue, task, priority, now)) {
+        pthread_mutex_unlock(&shard->lock);
+        return 0;
+    }
     pthread_cond_signal(&shard->cond);
     pthread_mutex_unlock(&shard->lock);
 
@@ -354,6 +355,7 @@ void ttak_thread_pool_destroy(ttak_thread_pool_t *pool) {
         while ((t = pool->shards[s].queue.pop(&pool->shards[s].queue, pool->creation_ts)) != NULL) {
             ttak_task_destroy(t, pool->creation_ts);
         }
+        ttak_priority_queue_destroy(&pool->shards[s].queue);
         pthread_mutex_destroy(&pool->shards[s].lock);
         pthread_cond_destroy(&pool->shards[s].cond);
     }

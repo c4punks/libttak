@@ -21,6 +21,7 @@ int main(void) {
     if (future) {
         char *result = (char *)ttak_future_get(future);
         printf("future resolved: %s\n", result);
+        ttak_future_release(future);
     }
 
     ttak_thread_pool_destroy(pool);

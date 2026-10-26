@@ -218,6 +218,15 @@ void ttak_dangerous_free(void *ptr);
 void ttak_mem_free(void *ptr);
 
 /**
+ * @brief Bytes currently held by ttak_mem allocations, headers included.
+ *
+ * Counts live blocks from ttak_mem_alloc() and its variants; it does not
+ * include ttak_dangerous_alloc() or memory the allocator keeps cached.
+ * Useful for spotting leaks and watching memory on small targets.
+ */
+uint64_t ttak_mem_usage_bytes(void);
+
+/**
  * @brief Explicitly tells the GC that the caller no longer uses this pointer.
  *
  * If @p owner is non-NULL, the pointer is also removed from that owner's

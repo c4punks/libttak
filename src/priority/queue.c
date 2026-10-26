@@ -78,10 +78,11 @@ static void *q_grow_buffer(void *ptr, size_t count, size_t *cap, size_t elem) {
  * @param task     Task to enqueue.
  * @param priority Priority score (higher = sooner).
  * @param now      Timestamp for allocations.
+ * @return true if queued, false if out of memory (the task is not queued).
  */
-static void q_push(struct __internal_ttak_proc_priority_queue_t *q, ttak_task_t *task, int priority, uint64_t now) {
+static _Bool q_push(struct __internal_ttak_proc_priority_queue_t *q, ttak_task_t *task, int priority, uint64_t now) {
     (void)now;
-    if (!q) return;
+    if (!q) return 0;
 #ifdef TTAK_DEBUG_QUEUE
     fprintf(stderr, "[queue] push task=%p priority=%d shard=%p size=%zu\n", (void*)task, priority, (void*)q, q->size);
 #endif
@@ -93,7 +94,7 @@ static void q_push(struct __internal_ttak_proc_priority_queue_t *q, ttak_task_t 
 #ifdef TTAK_DEBUG_QUEUE
             fprintf(stderr, "[queue] push failed: slot space exhausted\n");
 #endif
-            return;
+            return 0;
         }
         if (q->items_count == q->items_cap) {
             void *grown = q_grow_buffer(q->items, q->items_count, &q->items_cap, sizeof(*q->items));
@@ -101,7 +102,7 @@ static void q_push(struct __internal_ttak_proc_priority_queue_t *q, ttak_task_t 
 #ifdef TTAK_DEBUG_QUEUE
                 fprintf(stderr, "[queue] push failed: item alloc failed\n");
 #endif
-                return;
+                return 0;
             }
             q->items = (struct __internal_ttak_qnode_t *)grown;
         }
@@ -113,8 +114,17 @@ static void q_push(struct __internal_ttak_proc_priority_queue_t *q, ttak_task_t 
      * slot 0; the heap uses a NULL return to signal emptiness, so a NULL
      * payload would be dropped and desync q->size from the heap. */
     void *element = (void *)q_encode(priority, slot);
-    ttak_heap_tree_push(&q->heap, element, now);
+    if (!ttak_heap_tree_push(&q->heap, element, now)) {
+        /* Heap could not grow: hand the slot back. */
+        if (q->free_count < q->free_cap) {
+            q->free_slots[q->free_count++] = slot;
+        } else if (slot + 1 == q->items_count) {
+            q->items_count--;
+        }
+        return 0;
+    }
     q->size++;
+    return 1;
 }
 
 /**
@@ -207,4 +217,16 @@ void ttak_priority_queue_init(struct __internal_ttak_proc_priority_queue_t *q) {
     q->pop_blocking = q_pop_blocking;
     q->get_size = q_get_size;
     q->get_cap = q_get_cap;
+}
+
+void ttak_priority_queue_destroy(struct __internal_ttak_proc_priority_queue_t *q) {
+    if (!q) return;
+    ttak_heap_tree_destroy(&q->heap, 0);
+    ttak_dangerous_free(q->items);
+    ttak_dangerous_free(q->free_slots);
+    q->items = NULL;
+    q->free_slots = NULL;
+    q->items_count = q->items_cap = 0;
+    q->free_count = q->free_cap = 0;
+    q->size = 0;
 }

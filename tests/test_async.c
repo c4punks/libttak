@@ -37,8 +37,7 @@ void test_promise_future_basic() {
     ASSERT(res == &val);
     ASSERT(*(int *)res == 99);
     
-    ttak_mem_free(promise->future);
-    ttak_mem_free(promise);
+    ttak_future_release(future);
 }
 
 void test_async_schedule_fallback() {
@@ -73,8 +72,7 @@ void test_async_schedule_with_pool() {
     ttak_task_destroy(task, now + 20);
     ttak_async_shutdown();
 
-    ttak_mem_free(promise->future);
-    ttak_mem_free(promise);
+    ttak_future_release(future);
 }
 
 void test_task_metadata_domain_urgency() {

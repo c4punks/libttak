@@ -28,8 +28,9 @@ void ttak_heap_tree_init(ttak_heap_tree_t *heap, size_t initial_cap, int (*cmp)(
 
 /**
  * @brief Push an element into the heap.
+ * @return true on success, false if the heap could not grow.
  */
-void ttak_heap_tree_push(ttak_heap_tree_t *heap, void *element, uint64_t now);
+_Bool ttak_heap_tree_push(ttak_heap_tree_t *heap, void *element, uint64_t now);
 
 /**
  * @brief Pop the root element (min or max depending on comparator).

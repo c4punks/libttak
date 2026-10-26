@@ -304,9 +304,12 @@ Your `FreeRTOSConfig.h` needs:
   SysTick position within the current tick, so it keeps counting through idle
   periods.
 - newlib's `malloc` is made task-safe through `__malloc_lock`.
-- Futures and promises have no destroy call yet. Every pool submission keeps
-  its future and promise allocated, so long-running firmware should reuse
-  tasks rather than submitting without bound.
+- Call `ttak_future_release()` on every future from
+  `ttak_thread_pool_submit_task()` once you no longer need it. Without it,
+  each submission's future and promise stay allocated. This applies on every
+  platform, but it matters most with a few hundred KiB of RAM.
+  `ttak_mem_usage_bytes()` reports the bytes held by live `ttak_mem`
+  allocations, so you can check for growth.
 
 The unit tests run on hardware and in QEMU:
 
