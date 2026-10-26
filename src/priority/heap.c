@@ -71,14 +71,15 @@ static void heapify_down(ttak_heap_tree_t *heap, size_t index) {
  * @param heap    Heap to update.
  * @param element Payload pointer to push.
  * @param now     Timestamp for allocator bookkeeping.
+ * @return true on success, false if the heap could not grow.
  */
-void ttak_heap_tree_push(ttak_heap_tree_t *heap, void *element, uint64_t now) {
-    if (!heap || !heap->data) return;
+_Bool ttak_heap_tree_push(ttak_heap_tree_t *heap, void *element, uint64_t now) {
+    if (!heap || !heap->data) return 0;
 
     if (heap->size >= heap->capacity) {
         size_t new_cap = heap->capacity * 2;
         void **new_data = (void **)ttak_mem_realloc_raw(heap->data, sizeof(void *) * new_cap, __TTAK_UNSAFE_MEM_FOREVER__, now);
-        if (!new_data) return; // Allocation failed
+        if (!new_data) return 0; // Allocation failed
         heap->data = new_data;
         heap->capacity = new_cap;
     }
@@ -86,6 +87,7 @@ void ttak_heap_tree_push(ttak_heap_tree_t *heap, void *element, uint64_t now) {
     heap->data[heap->size] = element;
     heapify_up(heap, heap->size);
     heap->size++;
+    return 1;
 }
 
 /**
