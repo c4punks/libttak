@@ -3,10 +3,10 @@
 #include <stdlib.h>
 #include <string.h>
 /**
- * @brief Create a promise/future pair that lives for the process lifetime.
+ * @brief Create a promise/future pair.
  *
- * Memory is tracked via `__TTAK_UNSAFE_MEM_FOREVER__` and must therefore be
- * explicitly reclaimed by the caller.
+ * Memory is tracked via `__TTAK_UNSAFE_MEM_FOREVER__`; it is reclaimed by
+ * ttak_future_release() or ttak_promise_destroy().
  *
  * @param now Current timestamp for memory allocation tracking.
  * @return Pointer to the created promise, or NULL on allocation failure.
@@ -23,6 +23,7 @@ ttak_promise_t *ttak_promise_create(uint64_t now) {
         return NULL;
     }
     memset(promise->future, 0, sizeof(*promise->future));
+    promise->future->promise = promise;
 
     pthread_mutex_init(&promise->future->mutex, NULL);
     pthread_cond_init(&promise->future->cond, NULL);
@@ -48,10 +49,17 @@ void ttak_promise_set_value(ttak_promise_t *promise, void *val, uint64_t now) {
     if (!future) return;
 
     pthread_mutex_lock(&future->mutex);
+    bool first = !future->ready;
     future->result = val;
     future->ready = true;
+    /* The consumer already let go: this fulfilment is the last reference. */
+    bool reclaim = first && future->released;
     pthread_cond_broadcast(&future->cond);
     pthread_mutex_unlock(&future->mutex);
+
+    if (reclaim) {
+        ttak_promise_destroy(safe_promise);
+    }
 }
 
 /**
@@ -63,4 +71,15 @@ void ttak_promise_set_value(ttak_promise_t *promise, void *val, uint64_t now) {
 
 ttak_future_t *ttak_promise_get_future(ttak_promise_t *promise) {
     return promise ? promise->future : NULL;
+}
+
+void ttak_promise_destroy(ttak_promise_t *promise) {
+    if (!promise) return;
+    ttak_future_t *future = promise->future;
+    if (future) {
+        pthread_mutex_destroy(&future->mutex);
+        pthread_cond_destroy(&future->cond);
+        ttak_mem_free(future);
+    }
+    ttak_mem_free(promise);
 }

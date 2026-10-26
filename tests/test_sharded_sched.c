@@ -26,6 +26,12 @@
 #include <unistd.h>
 #include "test_macros.h"
 
+/* Futures held at once by the priority-0 test; bare-metal builds shrink it
+ * to fit the static pools. */
+#ifndef TEST_PRIO_ZERO_N
+#define TEST_PRIO_ZERO_N 64
+#endif
+
 /* Pull in the internal header so we can validate the mapping functions directly. */
 #include "../internal/ttak/shard_map.h"
 
@@ -128,6 +134,7 @@ void test_pool_sharded_routing(void) {
 
     for (int i = 0; i < N; i++) {
         ttak_future_get(futures[i]);
+        ttak_future_release(futures[i]);
     }
 
     ASSERT(routing_counter == N);
@@ -158,6 +165,7 @@ void test_pool_sharded_routing_net_urgency(void) {
 
     for (int i = 0; i < N; i++) {
         ttak_future_get(futures[i]);
+        ttak_future_release(futures[i]);
     }
 
     ASSERT(routing_counter_urgent == N);
@@ -202,6 +210,7 @@ void test_work_stealing(void) {
 
     for (int i = 0; i < N; i++) {
         ttak_future_get(futures[i]);
+        ttak_future_release(futures[i]);
     }
 
     ASSERT(steal_counter == N);
@@ -280,8 +289,8 @@ void test_pool_priority_zero_no_starvation(void) {
     ASSERT(pool != NULL);
 
     prio_zero_counter = 0;
-    const int N = 64;
-    ttak_future_t *futures[64];
+    const int N = TEST_PRIO_ZERO_N;
+    ttak_future_t *futures[TEST_PRIO_ZERO_N];
 
     for (int i = 0; i < N; i++) {
         futures[i] = ttak_thread_pool_submit_task(pool, prio_zero_task, NULL, 0, now);
@@ -290,6 +299,7 @@ void test_pool_priority_zero_no_starvation(void) {
 
     for (int i = 0; i < N; i++) {
         ttak_future_get(futures[i]);
+        ttak_future_release(futures[i]);
     }
 
     ASSERT_MSG(prio_zero_counter == N,

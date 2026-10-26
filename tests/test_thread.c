@@ -22,7 +22,8 @@ void test_thread_pool_basic() {
     void *result = ttak_future_get(fut);
     ASSERT(result == (void *)123);
     ASSERT(data == 42);
-    
+    ttak_future_release(fut);
+
     ttak_thread_pool_destroy(pool);
 }
 

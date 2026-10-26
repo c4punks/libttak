@@ -56,8 +56,11 @@ ttak_async_future_t ttak_async_call(ttak_task_func_t func,
 void *ttak_async_await(ttak_async_future_t *future);
 
 /**
- * @brief Destroys the promise/future pair allocated for the async call.
+ * @brief Releases the promise/future pair allocated for the async call.
  *
+ * May be called before the task has finished: the pair is then freed once
+ * the task fulfils it (see ttak_future_release()). Tasks dropped unexecuted,
+ * for example by destroying the async pool, keep their pair allocated.
  * Safe to call multiple times; subsequent invocations become no-ops.
  *
  * @param future Handle previously obtained via ttak_async_call().

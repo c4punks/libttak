@@ -1,4 +1,5 @@
 #include <ttak/async/future.h>
+#include <ttak/async/promise.h>
 #include <ttak/mem/epoch.h>
 #include <stddef.h>
 
@@ -38,4 +39,28 @@ void *ttak_future_get(ttak_future_t *future) {
     pthread_mutex_unlock(&future->mutex);
 
     return res;
+}
+
+/**
+ * @brief Drop the consumer's reference to a future.
+ *
+ * Frees the future and its promise now if the promise was already
+ * fulfilled; otherwise marks the future so ttak_promise_set_value() frees
+ * both once it has published the result.
+ *
+ * @param future Future to release.
+ */
+void ttak_future_release(ttak_future_t *future) {
+    if (!future) {
+        return;
+    }
+
+    pthread_mutex_lock(&future->mutex);
+    bool reclaim = future->ready;
+    future->released = true;
+    pthread_mutex_unlock(&future->mutex);
+
+    if (reclaim) {
+        ttak_promise_destroy(future->promise);
+    }
 }

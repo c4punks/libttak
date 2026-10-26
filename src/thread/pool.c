@@ -271,9 +271,8 @@ ttak_future_t *ttak_thread_pool_submit_task(ttak_thread_pool_t *pool, void *(*fu
 
     ttak_task_t *task = ttak_task_create((ttak_task_func_t)func, arg, promise, now);
     if (!task) {
-        ttak_mem_free(promise->future);
-        ttak_mem_free(promise); /* destroys promise here. */
-        return NULL; 
+        ttak_promise_destroy(promise);
+        return NULL;
     }
 
     /* Apply smart scheduling adjustment */
@@ -281,8 +280,7 @@ ttak_future_t *ttak_thread_pool_submit_task(ttak_thread_pool_t *pool, void *(*fu
 
     if (!ttak_thread_pool_schedule_task(pool, task, adjusted_priority, now)) {
         ttak_task_destroy(task, now);
-        ttak_mem_free(promise->future);
-        ttak_mem_free(promise);
+        ttak_promise_destroy(promise);
         return NULL;
     }
 
