@@ -345,6 +345,9 @@ netif. libttak only uses sockets. Your `lwipopts.h` needs:
 and `arch/cc.h` should set `LWIP_ERRNO_STDINCLUDE 1` (and, with newlib,
 `LWIP_TIMEVAL_PRIVATE 0`) so lwIP reports errors with newlib's errno values.
 `tests/baremetal/lwip` has a working configuration.
+[`examples/stm32f769i-disco-lwip`](examples/stm32f769i-disco-lwip) runs libttak over the
+STM32F769I-DISCO's real Ethernet (HAL ETH driver + LAN8742A). It includes the measured results and the
+board bring-up notes.
 
 lwIP differs from POSIX sockets in a few places:
 

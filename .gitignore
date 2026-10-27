@@ -21,3 +21,4 @@ fly.board.zip
 
 # bare-metal test images
 tests/baremetal/build/
+examples/stm32f769i-disco-lwip/build/
