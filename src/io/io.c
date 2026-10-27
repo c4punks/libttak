@@ -12,6 +12,7 @@
 #include <ttak/async/sched.h>
 #include <ttak/async/task.h>
 #include <ttak/mem/mem.h>
+#include "../../internal/ttak/io_internal.h"
 
 #include <errno.h>
 #include <stdio.h>
@@ -124,8 +125,20 @@ bool ttak_io_guard_valid(const ttak_io_guard_t *guard, uint64_t now) {
     return true;
 }
 
-static ttak_detachable_context_t *ttak_io_select_arena(void) {
-    return ttak_detachable_context_default();
+static ttak_detachable_context_t io_arena;
+static pthread_once_t io_arena_once = PTHREAD_ONCE_INIT;
+
+static void ttak_io_arena_init(void) {
+    ttak_detachable_context_init(&io_arena, 0);
+}
+
+/* Staging buffers used to come from the default context, which retires
+ * every free to the epoch: each ttak_io_sync_read()/_write() leaked its
+ * buffer (42 MB per 20000 hosted round trips, and an MCU's heap within a
+ * few hundred). */
+ttak_detachable_context_t *ttak_io_arena(void) {
+    pthread_once(&io_arena_once, ttak_io_arena_init);
+    return &io_arena;
 }
 
 ttak_io_status_t ttak_io_buffer_acquire(ttak_io_buffer_t *buffer,
@@ -140,7 +153,7 @@ ttak_io_status_t ttak_io_buffer_acquire(ttak_io_buffer_t *buffer,
     buffer->user_ptr = user_ptr;
     buffer->len = len;
     buffer->mode = mode;
-    buffer->arena = ttak_io_select_arena();
+    buffer->arena = ttak_io_arena();
 
     if (len == 0) {
         buffer->staging.data = NULL;

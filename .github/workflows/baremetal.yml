@@ -112,3 +112,36 @@ jobs:
       - name: Run tests
         run: scripts/baremetal/run_qemu.sh tests/baremetal/build/mps2_an500-freertos-lwip/*.elf
         timeout-minutes: 15
+
+  stm32f769i-disco-ethernet:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    name: build STM32F769I-DISCO Ethernet example
+    env:
+      FREERTOS_TAG: V11.1.0
+      LWIP_TAG: STABLE-2_2_1_RELEASE
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-arm-none-eabi libnewlib-arm-none-eabi rsync
+
+      - name: Fetch FreeRTOS, lwIP and the ST drivers
+        run: |
+          cd "$RUNNER_TEMP"
+          git clone --depth 1 --branch "$FREERTOS_TAG" https://github.com/FreeRTOS/FreeRTOS-Kernel
+          git clone --depth 1 --branch "$LWIP_TAG" https://github.com/lwip-tcpip/lwip
+          for repo in stm32f7xx-hal-driver cmsis-device-f7 cmsis-core stm32-lan8742; do
+            git clone --depth 1 "https://github.com/STMicroelectronics/$repo"
+          done
+
+      - name: Build the example
+        run: |
+          make -C examples/stm32f769i-disco-lwip \
+            FREERTOS_KERNEL_PATH="$RUNNER_TEMP/FreeRTOS-Kernel" LWIP_PATH="$RUNNER_TEMP/lwip" \
+            STM32_HAL_PATH="$RUNNER_TEMP/stm32f7xx-hal-driver" \
+            STM32_CMSIS_DEVICE_PATH="$RUNNER_TEMP/cmsis-device-f7" \
+            CMSIS_CORE_PATH="$RUNNER_TEMP/cmsis-core" LAN8742_PATH="$RUNNER_TEMP/stm32-lan8742"

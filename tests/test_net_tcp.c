@@ -1,6 +1,7 @@
 /* TCP over the loopback interface through the endpoint, poller, view, io
  * and session layers. Runs on POSIX hosts and, with NET=lwip, on lwIP. */
 #include <string.h>
+#include <malloc.h>
 
 #include <ttak/compat/baremetal.h>
 #include <ttak/net/endpoint.h>
@@ -180,6 +181,43 @@ static void test_sync_bulk_transfer(void) {
     close_pair(&c);
 }
 
+static size_t heap_in_use(void) {
+#if defined(__GLIBC__)
+    return mallinfo2().uordblks;
+#else
+    return (size_t)mallinfo().uordblks;
+#endif
+}
+
+/* Each sync read/write stages its data in a detachable buffer; those used
+ * to be retired to the epoch and never reclaimed (about 1 KiB per call). */
+static void test_sync_io_returns_memory(void) {
+    enum { ROUNDS = 1000, LEN = 1024 };
+    conn_t c = connect_pair();
+    uint64_t now = ttak_get_tick_count();
+    /* Otherwise Nagle waits out lwIP's delayed ACK on every round. */
+    ASSERT(ttak_net_endpoint_set_nodelay(c.client, c.owner, true, now) == TTAK_IO_SUCCESS);
+    ttak_io_guard_t server_io;
+    ASSERT(ttak_io_guard_init(&server_io, c.server_fd, c.owner, UINT64_MAX, now) == TTAK_IO_SUCCESS);
+    unsigned char *buf = io_buf(LEN);
+    memset(buf, 0x5a, LEN);
+
+    size_t before = 0;
+    for (int i = 0; i < ROUNDS; ++i) {
+        if (i == 100) before = heap_in_use(); /* after caches have warmed up */
+        size_t n = 0;
+        ASSERT(ttak_io_sync_write(&c.client_io, buf, LEN, &n, now) == TTAK_IO_SUCCESS && n == LEN);
+        for (size_t total = 0; total < LEN; total += n) {
+            ASSERT(ttak_io_sync_read(&server_io, buf + total, LEN - total, &n, now) == TTAK_IO_SUCCESS && n > 0);
+        }
+    }
+    size_t growth = heap_in_use() - before;
+    ASSERT_MSG(growth < 64 * 1024, "heap grew by %lu bytes over %d round trips",
+               (unsigned long)growth, ROUNDS - 100);
+    ttak_mem_free(buf);
+    close_pair(&c);
+}
+
 static void test_zerocopy_view(void) {
     conn_t c = connect_pair();
     uint64_t now = ttak_get_tick_count();
@@ -225,6 +263,7 @@ int main(void) {
     RUN_TEST(test_socket_options);
     RUN_TEST(test_poller_and_readv);
     RUN_TEST(test_sync_bulk_transfer);
+    RUN_TEST(test_sync_io_returns_memory);
     RUN_TEST(test_zerocopy_view);
     RUN_TEST(test_peer_close);
     RUN_TEST(test_session_lifecycle);

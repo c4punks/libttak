@@ -10,6 +10,7 @@
 #include <ttak/io/zerocopy.h>
 
 #include <ttak/mem/mem.h>
+#include "../../internal/ttak/io_internal.h"
 
 #include <errno.h>
 #include <stdbool.h>
@@ -56,7 +57,7 @@ ttak_io_status_t ttak_io_zerocopy_recv_fd(int fd,
         max_len = (size_t)TTAK_IO_ZC_MAX_SEGMENTS * (size_t)TTAK_IO_ZC_SEG_BYTES;
     }
 
-    region->arena = ttak_detachable_context_default();
+    region->arena = ttak_io_arena();
     region->allocation = ttak_detachable_mem_alloc(region->arena, max_len, now);
     if (!region->allocation.data) {
         ttak_io_zerocopy_region_init(region);

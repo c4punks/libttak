@@ -51,7 +51,20 @@ extern "C" {
 #define TTAK_DETACHABLE_FLIP_MAX_GAP_NS 100000ULL
 #define TTAK_DETACHABLE_FLIP_EVENT_THRESHOLD 512U
 #define TTAK_DETACHABLE_FLIP_SMALL_QUARANTINE_BYTES 64U
-#define TTAK_DETACHABLE_QUARANTINE_BYTE_LIMIT (1U << 20)
+/**
+ * @brief Bytes of churning frees an arena holds back before releasing them.
+ *
+ * Bare-metal builds keep this small: 1 MiB is more than the whole heap of
+ * most MCUs, and an alloc/free loop (such as I/O staging buffers) filled
+ * it until malloc() failed.
+ */
+#ifndef TTAK_DETACHABLE_QUARANTINE_BYTE_LIMIT
+#  if TTAK_PLATFORM_BAREMETAL
+#    define TTAK_DETACHABLE_QUARANTINE_BYTE_LIMIT (8U << 10)
+#  else
+#    define TTAK_DETACHABLE_QUARANTINE_BYTE_LIMIT (1U << 20)
+#  endif
+#endif
 
 /**
  * @brief Bit flags describing arena level traits.
