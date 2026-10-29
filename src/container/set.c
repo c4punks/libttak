@@ -16,7 +16,32 @@ void ttak_set_init(ttak_set_t *set, size_t capacity,
                    int (*key_cmp)(const void*, const void*),
                    void (*key_free)(void*)) {
     if (!set) return;
+#ifndef TTAK_NO_MALLOC
     ttak_table_init(&set->table, capacity, hash_func, key_cmp, key_free, NULL);
+#endif
+}
+
+/**
+ * @brief Initialize a set in caller-provided storage (zero-allocation).
+ *
+ * @param set          Set instance to initialize.
+ * @param capacity     Desired starting capacity.
+ * @param storage      Backing storage; must hold at least
+ *                     TTAK_SET_STATIC_STORAGE_SIZE(capacity) bytes.
+ * @param storage_size Size of @p storage in bytes.
+ * @param hash_func    Function that hashes a key (or NULL for default).
+ * @param key_cmp      Comparator for keys.
+ * @param key_free     Optional destructor for stored keys.
+ * @return true on success, false if arguments or storage size are invalid.
+ */
+bool ttak_set_init_static(ttak_set_t *set, size_t capacity,
+                          void *storage, size_t storage_size,
+                          uint64_t (*hash_func)(const void*, size_t, uint64_t, uint64_t),
+                          int (*key_cmp)(const void*, const void*),
+                          void (*key_free)(void*)) {
+    if (!set) return false;
+    return ttak_table_init_static(&set->table, capacity, storage, storage_size,
+                                  hash_func, key_cmp, key_free, NULL);
 }
 
 /**

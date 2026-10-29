@@ -5,6 +5,19 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <ttak/sync/sync.h>
+#include <ttak/compat/static_alloc.h>
+
+/**
+ * @brief Bytes of caller-provided storage required for a static ring buffer.
+ *
+ * Covers the item buffer (capacity rounded up to a power of two, matching
+ * the dynamic constructor) plus base alignment slack:
+ *   static uint8_t storage[TTAK_RINGBUF_STATIC_STORAGE_SIZE(64, sizeof(item))];
+ */
+#define TTAK_RINGBUF_STATIC_STORAGE_SIZE(capacity, item_size) \
+    TTAK_STATIC_ALIGN_UP( \
+        TTAK_STATIC_POW2(capacity) * (item_size) + TTAK_STATIC_STORAGE_ALIGN, \
+        TTAK_STATIC_STORAGE_ALIGN)
 
 /**
  * @brief Thread-safe Ring Buffer structure.
@@ -34,6 +47,21 @@ typedef ttak_ringbuf_t tt_ringbuf_t;
  * @return Pointer to ring buffer.
  */
 ttak_ringbuf_t *ttak_ringbuf_create(size_t capacity, size_t item_size);
+
+/**
+ * @brief Initializes a ring buffer in caller-provided storage (zero-allocation).
+ *
+ * @param rb           Ring buffer structure to initialize (caller-owned).
+ * @param capacity     Number of items.
+ * @param item_size    Size of each item.
+ * @param storage      Backing storage for the item buffer; must hold at
+ *                     least TTAK_RINGBUF_STATIC_STORAGE_SIZE(capacity,
+ *                     item_size) bytes.
+ * @param storage_size Size of @p storage in bytes.
+ * @return true on success, false if arguments or storage size are invalid.
+ */
+bool ttak_ringbuf_init_static(ttak_ringbuf_t *rb, size_t capacity, size_t item_size,
+                              void *storage, size_t storage_size);
 
 /**
  * @brief Destroys ring buffer.

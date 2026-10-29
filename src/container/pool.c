@@ -57,6 +57,53 @@ static inline size_t ttak_pool_chunk_count(size_t capacity) {
 }
 
 /**
+ * @brief Initializes an object pool in caller-provided storage (zero-allocation).
+ */
+bool ttak_object_pool_init_static(ttak_object_pool_t *pool, size_t capacity, size_t item_size,
+                                  void *storage, size_t storage_size) {
+    if (!pool || !capacity || !item_size) return false;
+    if (capacity > SIZE_MAX / item_size) return false;
+
+    size_t buffer_bytes = TTAK_STATIC_ALIGN_UP(capacity * item_size, TTAK_STATIC_STORAGE_ALIGN);
+    size_t bitmap_bytes = TTAK_STATIC_ALIGN_UP((capacity + 7U) / 8U, TTAK_STATIC_STORAGE_ALIGN);
+    size_t needed = buffer_bytes + bitmap_bytes;
+    if (!storage || storage_size < needed) return false;
+
+    char *base = (char *)TTAK_STATIC_ALIGN_UP((uintptr_t)storage, TTAK_STATIC_STORAGE_ALIGN);
+    void *buffer = base;
+    uint8_t *bitmap = (uint8_t *)(base + buffer_bytes);
+
+    memset(bitmap, 0, (capacity + 7U) / 8U);
+
+    *pool = (ttak_object_pool_t){
+        .buffer = buffer,
+        .bitmap = bitmap,
+        .item_size = item_size,
+        .capacity = capacity,
+        .used_count = 0,
+        .free_list = NULL,
+        .ols_chunk_count = ttak_pool_chunk_count(capacity),
+        .ols_chunk_cursor = 0,
+        .ols_lane_guard = 1U,
+        .ols_lane_seed = 1U,
+        .ols_lane_stride = 9U,
+        .last_recycled_index = SIZE_MAX,
+    };
+    ttak_spin_init(&pool->lock);
+
+    /* Build an O(1) LIFO free list when items are large enough to hold a pointer. */
+    if (item_size >= sizeof(void *)) {
+        for (size_t i = 0; i < capacity; ++i) {
+            void *item = (char *)buffer + (i * item_size);
+            *(void **)item = pool->free_list;
+            pool->free_list = item;
+        }
+    }
+    return true;
+}
+
+#ifndef TTAK_NO_MALLOC
+/**
  * @brief Creates pool logic.
  */
 ttak_object_pool_t *ttak_object_pool_create(size_t capacity, size_t item_size) {
@@ -105,6 +152,7 @@ void ttak_object_pool_destroy(ttak_object_pool_t *pool) {
         free(pool);
     }
 }
+#endif /* TTAK_NO_MALLOC */
 
 /**
  * @brief Fast allocation using bitmap scan.

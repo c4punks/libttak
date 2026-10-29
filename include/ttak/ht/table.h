@@ -4,6 +4,32 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
+#include <ttak/ht/hash.h>
+#include <ttak/compat/static_alloc.h>
+
+/**
+ * @brief Minimum capacity of a table (capacities round up to power-of-two,
+ *        never below this floor).
+ */
+#define TTAK_TABLE_MIN_CAPACITY ((size_t)16U)
+
+/**
+ * @brief Bytes of caller-provided storage required for a static table.
+ *
+ * Covers the ctrl bytes array and the fused key/value/key_len slots,
+ * including the TTAK_HT_MAX_PROBE probe padding and inter-region alignment:
+ *   static uint8_t storage[TTAK_TABLE_STATIC_STORAGE_SIZE(64)];
+ */
+#define TTAK_TABLE_STATIC_STORAGE_SIZE(capacity) \
+    TTAK_STATIC_ALIGN_UP( \
+        TTAK_STATIC_ALIGN_UP( \
+            (TTAK_STATIC_POW2(capacity) < TTAK_TABLE_MIN_CAPACITY \
+                ? TTAK_TABLE_MIN_CAPACITY : TTAK_STATIC_POW2(capacity)) + TTAK_HT_MAX_PROBE, \
+            TTAK_STATIC_STORAGE_ALIGN) + \
+        ((TTAK_STATIC_POW2(capacity) < TTAK_TABLE_MIN_CAPACITY \
+            ? TTAK_TABLE_MIN_CAPACITY : TTAK_STATIC_POW2(capacity)) + TTAK_HT_MAX_PROBE) * \
+            sizeof(ttak_table_entry_slot_t), \
+        TTAK_STATIC_STORAGE_ALIGN)
 
 /**
  * @brief Generic Table Entry.
@@ -43,6 +69,13 @@ typedef struct ttak_table {
     int (*key_cmp)(const void *k1, const void *k2);
     void (*key_free)(void *key);
     void (*val_free)(void *val);
+
+    /**
+     * @brief Non-zero when the backing arrays live in caller-provided
+     * storage (see ttak_table_init_static()): rehashing and array freeing
+     * are disabled regardless of build flags.
+     */
+    int is_static;
 } ttak_table_t;
 
 /**
@@ -55,6 +88,22 @@ void ttak_table_init(ttak_table_t *table, size_t capacity,
                      int (*key_cmp)(const void*, const void*),
                      void (*key_free)(void*),
                      void (*val_free)(void*));
+
+/**
+ * @brief Initialize a generic table in caller-provided storage (zero-allocation).
+ *
+ * The storage must hold at least TTAK_TABLE_STATIC_STORAGE_SIZE(capacity)
+ * bytes. Capacity is fixed (rounded up to a power of two, minimum 16):
+ * unlike tables from ttak_table_init(), a static table never rehashes and
+ * ttak_table_destroy() never frees its backing arrays.
+ *
+ * @return true on success, false if arguments or storage size are invalid.
+ */
+bool ttak_table_init_static(ttak_table_t *table, size_t capacity, void *storage, size_t storage_size,
+                            uint64_t (*hash_func)(const void*, size_t, uint64_t, uint64_t),
+                            int (*key_cmp)(const void*, const void*),
+                            void (*key_free)(void*),
+                            void (*val_free)(void*));
 
 void ttak_table_put(ttak_table_t *table, void *key, size_t key_len, void *value, uint64_t now);
 void *ttak_table_get(ttak_table_t *table, const void *key, size_t key_len, uint64_t now);

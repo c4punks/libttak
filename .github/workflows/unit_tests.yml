@@ -30,3 +30,22 @@ jobs:
 
       - name: Verify static archive exists
         run: test -f lib/libttak.a
+
+  zero-alloc-static:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build and run zero-allocation static-init test (-DTTAK_NO_MALLOC)
+        run: |
+          make clean
+          make zero-alloc-test CC=gcc
+        timeout-minutes: 5
+
+      - name: Build and run zero-allocation static-init test with tcc
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tcc
+          make zero-alloc-test CC=tcc
+        timeout-minutes: 5

@@ -304,6 +304,27 @@ examples/shared-memory/shared_example: examples/shared-memory/shared_example.c $
 tests/test_%: tests/test_%.c $(LIB)
 	$(CC) $(CFLAGS) $< -o $@ $(LIB) $(LDFLAGS)
 
+# ---- Zero-allocation (TTAK_NO_MALLOC) static init test -------------------
+# Builds the static-init-capable modules together with the static-init test
+# with the heap disabled: -DTTAK_NO_MALLOC compiles out the dynamic
+# constructors and the forced include of no_malloc.h turns any remaining
+# malloc/calloc/realloc/free call into a compile-time error (GCC/Clang) or
+# a link-time error (other toolchains).
+ZERO_ALLOC_SRCS = src/container/ringbuf.c src/container/pool.c \
+                  src/container/pair.c src/container/set.c \
+                  src/ht/hash.c src/ht/map.c src/ht/table.c \
+                  src/sync/spinlock.c src/security/siphash.c \
+                  src/net/mols_control.c
+ZERO_ALLOC_GUARD = -DTTAK_NO_MALLOC -include include/ttak/compat/no_malloc.h
+
+zero-alloc-test: tests/build/test_static_init_no_malloc
+	./tests/build/test_static_init_no_malloc
+
+tests/build/test_static_init_no_malloc: tests/test_static_init.c $(ZERO_ALLOC_SRCS)
+	@mkdir -p tests/build
+	$(CC) $(COMMON_WARNINGS) $(ZERO_ALLOC_GUARD) $^ -o $@ $(LDFLAGS_BASE)
+
+
 # ---- Bare-metal unit tests (PLATFORM=baremetal | freertos) -------------
 # Builds one firmware image per unit test for BOARD, using the startup and
 # syscall harness in tests/baremetal. Run them with
@@ -386,7 +407,7 @@ directories:
 	@mkdir -p $(foreach dir,$(SRC_DIRS),obj/$(patsubst src/%,%,$(dir))) obj/accel lib
 
 clean:
-	rm -rf obj lib tests/*.d $(BM_DIR)/build
+	rm -rf obj lib tests/*.d tests/build $(BM_DIR)/build
 	find tests/ -maxdepth 1 -type f ! -name "*.c" ! -name "*.h" -delete
 	rm -f examples/mersenne-prime/mersenne_explorer examples/mersenne-prime/*.o
 	rm -f examples/shared-memory/shared_example
@@ -410,4 +431,4 @@ blueprints:
 
 -include $(DEPS)
 
-.PHONY: all clean directories install uninstall blueprints test tests asm asm_clean examples_run
+.PHONY: all clean directories install uninstall blueprints test tests asm asm_clean examples_run zero-alloc-test

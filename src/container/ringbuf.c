@@ -21,6 +21,34 @@ static inline size_t next_power_of_two(size_t x) {
 }
 
 /**
+ * @brief Initializes a ring buffer in caller-provided storage (zero-allocation).
+ */
+bool ttak_ringbuf_init_static(ttak_ringbuf_t *rb, size_t capacity, size_t item_size,
+                              void *storage, size_t storage_size) {
+    if (!rb || !capacity || !item_size) return false;
+    size_t alloc_cap = next_power_of_two(capacity);
+    if (alloc_cap < capacity || alloc_cap > SIZE_MAX / item_size) return false;
+
+    size_t needed = TTAK_STATIC_ALIGN_UP(alloc_cap * item_size, TTAK_STATIC_STORAGE_ALIGN)
+                    + TTAK_STATIC_STORAGE_ALIGN;
+    if (!storage || storage_size < needed) return false;
+
+    void *aligned = (void *)TTAK_STATIC_ALIGN_UP((uintptr_t)storage, TTAK_STATIC_STORAGE_ALIGN);
+    *rb = (ttak_ringbuf_t){
+        .buffer = aligned,
+        .capacity = capacity,
+        .item_size = item_size,
+        .mask = (alloc_cap == capacity) ? (alloc_cap - 1) : 0,
+        .head = 0,
+        .tail = 0,
+        .full = false,
+    };
+    ttak_rwlock_init(&rb->lock);
+    return true;
+}
+
+#ifndef TTAK_NO_MALLOC
+/**
  * @brief Creates ring buffer.
  */
 ttak_ringbuf_t *ttak_ringbuf_create(size_t capacity, size_t item_size) {
@@ -62,6 +90,7 @@ void ttak_ringbuf_destroy(ttak_ringbuf_t *rb) {
         free(rb);
     }
 }
+#endif /* TTAK_NO_MALLOC */
 
 /**
  * @brief Pushes item (copy).

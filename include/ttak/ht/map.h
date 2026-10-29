@@ -11,7 +11,24 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdbool.h>
 #include <ttak/ht/hash.h>
+#include <ttak/compat/static_alloc.h>
+
+/**
+ * @brief Bytes of caller-provided storage required for a static map.
+ *
+ * Covers the ctrl bytes array and the fused entries array, including the
+ * TTAK_HT_MAX_PROBE probe padding used by the dynamic constructor.
+ * Suitable for static/stack buffers:
+ *   static uint8_t storage[TTAK_MAP_STATIC_STORAGE_SIZE(64)];
+ */
+#define TTAK_MAP_STATIC_STORAGE_SIZE(init_cap) \
+    TTAK_STATIC_ALIGN_UP( \
+        TTAK_STATIC_ALIGN_UP(TTAK_STATIC_POW2(init_cap) + TTAK_HT_MAX_PROBE, \
+                             TTAK_STATIC_STORAGE_ALIGN) + \
+        (TTAK_STATIC_POW2(init_cap) + TTAK_HT_MAX_PROBE) * sizeof(ttak_map_entry_t), \
+        TTAK_STATIC_STORAGE_ALIGN)
 
 /** @brief Alias: create a new map with @p init_cap initial capacity. */
 #define ttak_create_map tt_create_map
@@ -30,6 +47,23 @@
  * @return         Pointer to the allocated map, or NULL on failure.
  */
 tt_map_t *ttak_create_map(size_t init_cap, uint64_t now);
+
+/**
+ * @brief Initializes a map in caller-provided storage (zero-allocation).
+ *
+ * The storage must hold at least TTAK_MAP_STATIC_STORAGE_SIZE(init_cap)
+ * bytes. The capacity is fixed at init_cap rounded up to a power of two:
+ * unlike maps from ttak_create_map(), a static map never grows and
+ * ttak_destroy_map() never frees its backing arrays.
+ *
+ * @param map         Map structure to initialize (caller-owned).
+ * @param init_cap    Desired slot count (rounded up to power-of-two).
+ * @param storage     Backing storage for ctrl/entries arrays.
+ * @param storage_size Size of @p storage in bytes.
+ * @return @p map on success, NULL if arguments or storage size are invalid.
+ */
+tt_map_t *ttak_map_init_static(tt_map_t *map, size_t init_cap,
+                               void *storage, size_t storage_size);
 
 /**
  * @brief Inserts or updates a key/value pair.

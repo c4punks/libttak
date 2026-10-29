@@ -3,8 +3,22 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdbool.h>
 #include <ttak/sync/sync.h>
 #include <ttak/sync/spinlock.h>
+#include <ttak/compat/static_alloc.h>
+
+/**
+ * @brief Bytes of caller-provided storage required for a static object pool.
+ *
+ * Covers the item buffer and the allocation bitmap:
+ *   static uint8_t storage[TTAK_POOL_STATIC_STORAGE_SIZE(128, sizeof(obj))];
+ */
+#define TTAK_POOL_STATIC_STORAGE_SIZE(capacity, item_size) \
+    TTAK_STATIC_ALIGN_UP( \
+        TTAK_STATIC_ALIGN_UP((capacity) * (item_size), TTAK_STATIC_STORAGE_ALIGN) + \
+        TTAK_STATIC_ALIGN_UP(((capacity) + 7U) / 8U, TTAK_STATIC_STORAGE_ALIGN), \
+        TTAK_STATIC_STORAGE_ALIGN)
 
 /**
  * @brief Fixed-size Object Pool structure.
@@ -43,6 +57,25 @@ typedef ttak_object_pool_t tt_object_pool_t;
  * @return Pointer to the new pool, or NULL on failure.
  */
 ttak_object_pool_t *ttak_object_pool_create(size_t capacity, size_t item_size);
+
+/**
+ * @brief Initializes an object pool in caller-provided storage
+ * (zero-allocation).
+ *
+ * The item buffer and allocation bitmap are carved out of @p storage (the
+ * bitmap is zero-initialized by this call; item contents are left untouched).
+ *
+ * @param pool         Pool structure to initialize (caller-owned).
+ * @param capacity     Maximum number of items.
+ * @param item_size    Size of each item in bytes.
+ * @param storage      Backing storage; must hold at least
+ *                     TTAK_POOL_STATIC_STORAGE_SIZE(capacity, item_size)
+ *                     bytes.
+ * @param storage_size Size of @p storage in bytes.
+ * @return true on success, false if arguments or storage size are invalid.
+ */
+bool ttak_object_pool_init_static(ttak_object_pool_t *pool, size_t capacity, size_t item_size,
+                                  void *storage, size_t storage_size);
 
 /**
  * @brief Destroys the object pool and frees memory.

@@ -18,6 +18,24 @@ typedef pthread_cond_t tt_cond_t;
 typedef pthread_rwlock_t ttak_rwlock_t;
 typedef pthread_rwlock_t tt_rwlock_t;
 
+/*
+ * Static (zero-allocation) initialization
+ * ---------------------------------------
+ * The sync primitives are plain pthread objects, so they need no storage
+ * sizing macros and no init_static variants: they can be initialized at
+ * compile time or placed in static storage with no heap involvement.
+ *
+ *   static ttak_mutex_t  mutex  = TTAK_MUTEX_INITIALIZER;
+ *   static ttak_rwlock_t rwlock = TTAK_RWLOCK_INITIALIZER;
+ *   ttak_mutex_lock(&mutex); ... ttak_mutex_destroy(&mutex);
+ *
+ * The *_init() functions below are equivalent for runtime-only init.
+ */
+/** @brief Static initializer for ttak_mutex_t (PTHREAD_MUTEX_INITIALIZER). */
+#define TTAK_MUTEX_INITIALIZER  PTHREAD_MUTEX_INITIALIZER
+/** @brief Static initializer for ttak_rwlock_t (PTHREAD_RWLOCK_INITIALIZER). */
+#define TTAK_RWLOCK_INITIALIZER PTHREAD_RWLOCK_INITIALIZER
+
 /**
  * @brief Generic shard structure.
  */
