@@ -25,8 +25,15 @@ void DebugMon_Handler(void)   __attribute__((weak, alias("Default_Handler")));
 void PendSV_Handler(void)     __attribute__((weak, alias("Default_Handler")));
 void SysTick_Handler(void)    __attribute__((weak, alias("Default_Handler")));
 
+/* External interrupt slots (NVIC IRQ0..IRQ3); tests override the weak
+ * aliases and trigger the IRQ through NVIC->ISPR. */
+void TTAK_IRQ0_Handler(void)  __attribute__((weak, alias("Default_Handler")));
+void TTAK_IRQ1_Handler(void)  __attribute__((weak, alias("Default_Handler")));
+void TTAK_IRQ2_Handler(void)  __attribute__((weak, alias("Default_Handler")));
+void TTAK_IRQ3_Handler(void)  __attribute__((weak, alias("Default_Handler")));
+
 __attribute__((section(".isr_vector"), used))
-void (*const g_vectors[16])(void) = {
+void (*const g_vectors[16 + 4])(void) = {
     (void (*)(void))&_estack,
     Reset_Handler,
     NMI_Handler,
@@ -40,6 +47,10 @@ void (*const g_vectors[16])(void) = {
     0,
     PendSV_Handler,
     SysTick_Handler,
+    TTAK_IRQ0_Handler,
+    TTAK_IRQ1_Handler,
+    TTAK_IRQ2_Handler,
+    TTAK_IRQ3_Handler,
 };
 
 #define SCB_CPACR (*(volatile uint32_t *)0xE000ED88u)

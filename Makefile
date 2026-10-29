@@ -356,7 +356,7 @@ BAREMETAL_TESTS = test_aria test_async test_atomic test_buddy test_chacha20_poly
                   test_owner_complex test_pool test_priority test_security \
                   test_security_hardening test_security_util test_seed test_shared \
                   test_simple_ds test_smart_sched test_stats test_status test_sync \
-                  test_table test_timing test_track_mem
+                  test_table test_timing test_track_mem test_ringbuf_isr
 BAREMETAL_THREAD_TESTS = test_epoch_grace test_ringbuf test_sharded_sched \
                          test_thread test_worker_abort test_worker_dirty_recovery
 BAREMETAL_NET_TESTS = test_net_tcp
