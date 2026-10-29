@@ -1,10 +1,13 @@
 #include <ttak/container/ringbuf.h>
 #include <ttak/mem/mem.h>
 #include <ttak/timing/timing.h>
+#include <ttak/arch/ttak_critical.h>
 #include <string.h>
 #include <stdlib.h>
 
 static bool ringbuf_is_empty_locked(const ttak_ringbuf_t *rb);
+static bool ringbuf_push_unlocked(ttak_ringbuf_t *rb, const void *item);
+static bool ringbuf_pop_unlocked(ttak_ringbuf_t *rb, void *out_item);
 
 static inline size_t next_power_of_two(size_t x) {
     if (x <= 1) return 1;
@@ -97,23 +100,9 @@ void ttak_ringbuf_destroy(ttak_ringbuf_t *rb) {
  */
 bool ttak_ringbuf_push(ttak_ringbuf_t *rb, const void *item) {
     ttak_rwlock_wrlock(&rb->lock);
-    if (rb->full) {
-        ttak_rwlock_unlock(&rb->lock);
-        return false;
-    }
-    
-    char *dest = (char *)rb->buffer + (rb->head * rb->item_size);
-    memcpy(dest, item, rb->item_size);
-    
-    size_t next_head = rb->mask ? ((rb->head + 1) & rb->mask)
-                                : ((rb->head + 1 < rb->capacity) ? (rb->head + 1) : 0);
-    rb->head = next_head;
-    if (rb->head == rb->tail) {
-        rb->full = true;
-    }
-    
+    bool ok = ringbuf_push_unlocked(rb, item);
     ttak_rwlock_unlock(&rb->lock);
-    return true;
+    return ok;
 }
 
 /**
@@ -121,22 +110,66 @@ bool ttak_ringbuf_push(ttak_ringbuf_t *rb, const void *item) {
  */
 bool ttak_ringbuf_pop(ttak_ringbuf_t *rb, void *out_item) {
     ttak_rwlock_wrlock(&rb->lock);
-    if (ringbuf_is_empty_locked(rb)) {
-        ttak_rwlock_unlock(&rb->lock);
+    bool ok = ringbuf_pop_unlocked(rb, out_item);
+    ttak_rwlock_unlock(&rb->lock);
+    return ok;
+}
+
+/**
+ * @brief ISR-context push (see ringbuf.h): never takes the rwlock, so it
+ * cannot deadlock against a task holding it. Both sides of an
+ * ISR-shared buffer must use the _isr variants.
+ */
+bool ttak_ringbuf_push_isr(ttak_ringbuf_t *rb, const void *item) {
+    ttak_critical_state_t state;
+    TTAK_ENTER_CRITICAL_ISR(state);
+    bool ok = ringbuf_push_unlocked(rb, item);
+    TTAK_EXIT_CRITICAL_ISR(state);
+    return ok;
+}
+
+/**
+ * @brief ISR-context pop (see ttak_ringbuf_push_isr).
+ */
+bool ttak_ringbuf_pop_isr(ttak_ringbuf_t *rb, void *out_item) {
+    ttak_critical_state_t state;
+    TTAK_ENTER_CRITICAL_ISR(state);
+    bool ok = ringbuf_pop_unlocked(rb, out_item);
+    TTAK_EXIT_CRITICAL_ISR(state);
+    return ok;
+}
+
+static bool ringbuf_push_unlocked(ttak_ringbuf_t *rb, const void *item) {
+    if (rb->full) {
         return false;
     }
-    
+
+    char *dest = (char *)rb->buffer + (rb->head * rb->item_size);
+    memcpy(dest, item, rb->item_size);
+
+    size_t next_head = rb->mask ? ((rb->head + 1) & rb->mask)
+                                : ((rb->head + 1 < rb->capacity) ? (rb->head + 1) : 0);
+    rb->head = next_head;
+    if (rb->head == rb->tail) {
+        rb->full = true;
+    }
+    return true;
+}
+
+static bool ringbuf_pop_unlocked(ttak_ringbuf_t *rb, void *out_item) {
+    if (ringbuf_is_empty_locked(rb)) {
+        return false;
+    }
+
     char *src = (char *)rb->buffer + (rb->tail * rb->item_size);
     if (out_item) {
         memcpy(out_item, src, rb->item_size);
     }
-    
+
     size_t next_tail = rb->mask ? ((rb->tail + 1) & rb->mask)
                                 : ((rb->tail + 1 < rb->capacity) ? (rb->tail + 1) : 0);
     rb->tail = next_tail;
     rb->full = false;
-    
-    ttak_rwlock_unlock(&rb->lock);
     return true;
 }
 

@@ -277,6 +277,28 @@ What changes on bare metal:
   build with FreeRTOS and lwIP (see [lwIP networking](#lwip-networking)),
   `/proc` statistics, and the `__int128` accelerator backend.
 
+## ISR safety and critical sections
+
+`<ttak/arch/ttak_critical.h>` provides two critical-section macro pairs:
+
+- `TTAK_ENTER_CRITICAL()` / `TTAK_EXIT_CRITICAL()` — task context only.
+- `TTAK_ENTER_CRITICAL_ISR(state)` / `TTAK_EXIT_CRITICAL_ISR(state)` —
+  interrupt context only; `state` is a `ttak_critical_state_t` declared by
+  the caller and carries the interrupt mask from enter to exit.
+
+On Cortex-M the task variants mask IRQs with `cpsid i`/`cpsie i` and the
+ISR variants save/restore PRIMASK; on FreeRTOS they map to
+`taskENTER_CRITICAL()` / `taskENTER_CRITICAL_FROM_ISR()`. On hosted POSIX
+and MSVC/x86 builds both pairs are no-ops.
+
+Containers that take a pthread lock cannot be touched from an ISR (the
+lock is illegal there). The ring buffer therefore adds interrupt-safe
+variants, `ttak_ringbuf_push_isr()` / `ttak_ringbuf_pop_isr()`: they never
+take the rwlock and serialize with a critical section instead. When a
+buffer is shared between a task and an ISR, **both** sides must use the
+`_isr` variants; the regular task-context APIs must not be mixed with them
+on the same buffer.
+
 ## Stack usage analysis
 
 Bare-metal builds compile with `-fstack-usage` (disable with

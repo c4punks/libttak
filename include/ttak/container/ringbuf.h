@@ -70,6 +70,9 @@ void ttak_ringbuf_destroy(ttak_ringbuf_t *rb);
 
 /**
  * @brief Pushes an item to the buffer.
+ *
+ * Task context only. Do not mix with the _isr variants on the same
+ * buffer; see ttak_ringbuf_push_isr().
  * 
  * @param rb Buffer.
  * @param item Pointer to data to copy in.
@@ -79,12 +82,29 @@ bool ttak_ringbuf_push(ttak_ringbuf_t *rb, const void *item);
 
 /**
  * @brief Pops an item from the buffer.
- * 
+ *
  * @param rb Buffer.
  * @param out_item Pointer to copy data out to.
  * @return true if popped, false if empty.
  */
 bool ttak_ringbuf_pop(ttak_ringbuf_t *rb, void *out_item);
+
+/**
+ * @brief ISR-context push: callable only from interrupt context.
+ *
+ * Never takes the rwlock (a pthread lock is illegal in ISR); the
+ * operation is serialized by the ISR critical section instead. If the
+ * buffer is shared between a task and an ISR, both sides must use the
+ * _isr variants — do not mix with the task-context APIs.
+ */
+bool ttak_ringbuf_push_isr(ttak_ringbuf_t *rb, const void *item);
+
+/**
+ * @brief ISR-context pop: callable only from interrupt context.
+ *
+ * Same locking rules as ttak_ringbuf_push_isr().
+ */
+bool ttak_ringbuf_pop_isr(ttak_ringbuf_t *rb, void *out_item);
 
 /**
  * @brief Checks if empty.
