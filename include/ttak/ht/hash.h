@@ -23,6 +23,14 @@
 #define OCCUPIED 0x0C
 
 /**
+ * @brief Probe padding appended to the ctrl/entries arrays.
+ *
+ * Shared by the dynamic constructors and the TTAK_MAP_STATIC_STORAGE_SIZE /
+ * TTAK_TABLE_STATIC_STORAGE_SIZE sizing macros so both agree on the layout.
+ */
+#define TTAK_HT_MAX_PROBE ((size_t)32U)
+
+/**
  * @brief Fused key/value slot for the open-addressing map (AoS layout).
  *
  * Storing the key next to its value halves the cache misses per successful
@@ -43,6 +51,12 @@ typedef struct {
     size_t    size;      /**< Number of live key/value pairs */
     size_t    tombstones;/**< Slots marked DELETED; count toward the resize trigger */
     uint64_t  seed;      /**< Seed for wyhash */
+    /**
+     * @brief Non-zero when the backing arrays live in caller-provided
+     * storage (see ttak_map_init_static()): growth and array freeing are
+     * disabled regardless of build flags.
+     */
+    int       is_static;
 #ifndef _MSC_VER
     alignas(ttak_max_align_t) char padding[0];
 #endif

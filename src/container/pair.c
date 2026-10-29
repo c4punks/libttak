@@ -1,7 +1,32 @@
 #include <ttak/container/pair.h>
 #include <ttak/mem/mem.h>
 #include <stdlib.h>
+#include <string.h>
 
+/**
+ * @brief Initialize a pair in caller-provided storage (zero-allocation).
+ *
+ * @param pair         Pair structure to configure.
+ * @param length       Number of entries the pair should manage.
+ * @param storage      Backing storage for the element pointer array; must
+ *                     hold at least TTAK_PAIR_STATIC_STORAGE_SIZE(length)
+ *                     bytes.
+ * @param storage_size Size of @p storage in bytes.
+ * @return true on success, false if arguments or storage size are invalid.
+ */
+bool ttak_pair_init_static(ttak_pair_t *pair, size_t length,
+                           void *storage, size_t storage_size) {
+    if (!pair) return false;
+    size_t needed = TTAK_STATIC_ALIGN_UP(length * sizeof(void *), TTAK_STATIC_STORAGE_ALIGN);
+    if (length > 0 && (!storage || storage_size < needed)) return false;
+
+    pair->length = length;
+    pair->elements = length > 0 ? (void **)storage : NULL;
+    if (length > 0) memset(pair->elements, 0, length * sizeof(void *));
+    return true;
+}
+
+#ifndef TTAK_NO_MALLOC
 /**
  * @brief Initialize a fixed-length pair container.
  *
@@ -18,6 +43,7 @@ void ttak_pair_init(ttak_pair_t *pair, size_t length, uint64_t now) {
         pair->elements = NULL;
     }
 }
+#endif /* TTAK_NO_MALLOC */
 
 /**
  * @brief Assign an element to the given index.
@@ -54,8 +80,10 @@ void *ttak_pair_get(const ttak_pair_t *pair, size_t index) {
  */
 void ttak_pair_destroy(ttak_pair_t *pair, void (*free_elem)(void*), uint64_t now) {
     if (!pair) return;
+    (void)now;
     
     if (pair->elements) {
+#ifndef TTAK_NO_MALLOC
         if (ttak_mem_access(pair->elements, now)) {
             if (free_elem) {
                 for (size_t i = 0; i < pair->length; i++) {
@@ -66,6 +94,15 @@ void ttak_pair_destroy(ttak_pair_t *pair, void (*free_elem)(void*), uint64_t now
             }
             ttak_mem_free(pair->elements);
         }
+#else
+        if (free_elem) {
+            for (size_t i = 0; i < pair->length; i++) {
+                if (pair->elements[i]) {
+                    free_elem(pair->elements[i]);
+                }
+            }
+        }
+#endif
     }
     pair->elements = NULL;
     pair->length = 0;

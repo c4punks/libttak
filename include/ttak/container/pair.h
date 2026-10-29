@@ -4,6 +4,14 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <ttak/compat/static_alloc.h>
+
+/**
+ * @brief Bytes of caller-provided storage required for a static pair.
+ *   static uint8_t storage[TTAK_PAIR_STATIC_STORAGE_SIZE(n)];
+ */
+#define TTAK_PAIR_STATIC_STORAGE_SIZE(length) \
+    TTAK_STATIC_ALIGN_UP((length) * sizeof(void *), TTAK_STATIC_STORAGE_ALIGN)
 
 /**
  * @brief Generic Pair/Tuple structure.
@@ -20,6 +28,20 @@ typedef struct ttak_pair {
  * @param length Number of elements this pair will hold.
  */
 void ttak_pair_init(ttak_pair_t *pair, size_t length, uint64_t now);
+
+/**
+ * @brief Initializes a pair in caller-provided storage (zero-allocation).
+ *
+ * @param pair         Pair structure to initialize (caller-owned).
+ * @param length       Number of elements this pair will hold.
+ * @param storage      Backing storage for the element pointer array; must
+ *                     hold at least TTAK_PAIR_STATIC_STORAGE_SIZE(length)
+ *                     bytes.
+ * @param storage_size Size of @p storage in bytes.
+ * @return true on success, false if arguments or storage size are invalid.
+ */
+bool ttak_pair_init_static(ttak_pair_t *pair, size_t length,
+                           void *storage, size_t storage_size);
 
 /**
  * @brief Set an element at a specific index.

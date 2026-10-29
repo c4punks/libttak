@@ -5,7 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define MAX_PROBE 32
+#define MAX_PROBE TTAK_HT_MAX_PROBE
 
 /**
  * @brief Default wyhash implementation for arbitrary byte keys.
@@ -18,6 +18,7 @@ static uint64_t default_wyhash(const void *key, size_t len, uint64_t k0, uint64_
 /**
  * @brief Initialize a hash table with optional callbacks.
  */
+#ifndef TTAK_NO_MALLOC
 void ttak_table_init(ttak_table_t *table, size_t capacity,
                      uint64_t (*hash_func)(const void*, size_t, uint64_t, uint64_t),
                      int (*key_cmp)(const void*, const void*),
@@ -38,6 +39,7 @@ void ttak_table_init(ttak_table_t *table, size_t capacity,
     table->key_cmp = key_cmp;
     table->key_free = key_free;
     table->val_free = val_free;
+    table->is_static = 0;
 
     size_t padded_cap = cap + MAX_PROBE;
     ttak_mem_flags_t flags = (padded_cap * (sizeof(uint8_t) + sizeof(ttak_table_entry_slot_t)) >= 2 * 1024 * 1024) ? TTAK_MEM_HUGE_PAGES : TTAK_MEM_DEFAULT;
@@ -47,6 +49,45 @@ void ttak_table_init(ttak_table_t *table, size_t capacity,
 
     if (table->ctrls) memset(table->ctrls, 0, padded_cap * sizeof(uint8_t));
 }
+#endif /* TTAK_NO_MALLOC */
+
+/**
+ * @brief Initialize a hash table in caller-provided storage (zero-allocation).
+ */
+bool ttak_table_init_static(ttak_table_t *table, size_t capacity, void *storage, size_t storage_size,
+                            uint64_t (*hash_func)(const void*, size_t, uint64_t, uint64_t),
+                            int (*key_cmp)(const void*, const void*),
+                            void (*key_free)(void*),
+                            void (*val_free)(void*)) {
+    if (!table || !storage) return false;
+
+    size_t cap = TTAK_STATIC_POW2(capacity);
+    if (cap < TTAK_TABLE_MIN_CAPACITY) cap = TTAK_TABLE_MIN_CAPACITY;
+    size_t padded_cap = cap + MAX_PROBE;
+    if (padded_cap < cap) return false;
+
+    size_t ctrl_bytes = TTAK_STATIC_ALIGN_UP(padded_cap, TTAK_STATIC_STORAGE_ALIGN);
+    size_t needed = ctrl_bytes + padded_cap * sizeof(ttak_table_entry_slot_t);
+    if (storage_size < needed) return false;
+
+    char *base = (char *)TTAK_STATIC_ALIGN_UP((uintptr_t)storage, TTAK_STATIC_STORAGE_ALIGN);
+
+    table->capacity = cap;
+    table->size = 0;
+    table->tombstones = 0;
+    table->k0 = 0xa0761d6478bd642fULL;
+    table->k1 = 0xe7037ed1a0b428dbULL;
+    table->hash_func = hash_func ? hash_func : default_wyhash;
+    table->key_cmp = key_cmp;
+    table->key_free = key_free;
+    table->val_free = val_free;
+    table->is_static = 1;
+
+    table->ctrls = (uint8_t *)base;
+    table->entries = (ttak_table_entry_slot_t *)(base + ctrl_bytes);
+    memset(table->ctrls, 0, padded_cap * sizeof(uint8_t));
+    return true;
+}
 
 /**
  * @brief Rebuild the table into fresh arrays of @p new_cap slots.
@@ -55,6 +96,7 @@ void ttak_table_init(ttak_table_t *table, size_t capacity,
  * @p new_cap may equal the current capacity to rehash in place when the
  * table is full of tombstones rather than live entries.
  */
+#ifndef TTAK_NO_MALLOC
 static void ttak_table_rehash(ttak_table_t *table, uint64_t now, size_t new_cap) {
     size_t old_cap = table->capacity;
     uint8_t *old_ctrls = table->ctrls;
@@ -79,6 +121,7 @@ static void ttak_table_rehash(ttak_table_t *table, uint64_t now, size_t new_cap)
     table->capacity = new_t.capacity;
     table->tombstones = 0;
 }
+#endif /* TTAK_NO_MALLOC */
 
 /**
  * @brief Single-probe insert core shared by ttak_table_put() and
@@ -89,13 +132,19 @@ static void ttak_table_rehash(ttak_table_t *table, uint64_t now, size_t new_cap)
  * @return true if a new slot was occupied, false on an existing-key hit.
  */
 static bool table_insert(ttak_table_t *table, void *key, size_t key_len, void *value, uint64_t now, bool replace) {
-    /* Tombstones degrade probe chains just like live entries, so they count
-     * toward the load factor. If live entries alone are under 70% the table
-     * is mostly tombstones: rehash at the same capacity to bound memory. */
-    if ((table->size + table->tombstones) * 10 >= table->capacity * 7) {
-        size_t new_cap = (table->size * 10 >= table->capacity * 7) ? table->capacity * 2 : table->capacity;
-        ttak_table_rehash(table, now, new_cap);
+    /* Static tables never rehash: sizing must guarantee headroom below the
+     * load-factor trigger. Dynamic tables rehash as before. */
+#ifndef TTAK_NO_MALLOC
+    if (!table->is_static) {
+        /* Tombstones degrade probe chains just like live entries, so they count
+         * toward the load factor. If live entries alone are under 70% the table
+         * is mostly tombstones: rehash at the same capacity to bound memory. */
+        if ((table->size + table->tombstones) * 10 >= table->capacity * 7) {
+            size_t new_cap = (table->size * 10 >= table->capacity * 7) ? table->capacity * 2 : table->capacity;
+            ttak_table_rehash(table, now, new_cap);
+        }
     }
+#endif
 
     uint64_t hash = table->hash_func(key, key_len, table->k0, table->k1);
     size_t idx = hash & (table->capacity - 1);
@@ -187,8 +236,14 @@ void ttak_table_destroy(ttak_table_t *table, uint64_t now) {
             if (table->val_free && table->entries[i].value) table->val_free(table->entries[i].value);
         }
     }
-    ttak_mem_free(table->ctrls);
-    ttak_mem_free(table->entries);
+#ifndef TTAK_NO_MALLOC
+    if (!table->is_static) {
+        ttak_mem_free(table->ctrls);
+        ttak_mem_free(table->entries);
+    }
+#endif
+    table->ctrls = NULL;
+    table->entries = NULL;
     table->size = 0;
     table->tombstones = 0;
 }
