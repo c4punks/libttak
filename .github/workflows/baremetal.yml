@@ -40,6 +40,17 @@ jobs:
       - name: Verify static archive exists
         run: test -f lib/libttak.a
 
+      - name: Check stack usage (-fstack-usage)
+        run: python3 scripts/baremetal/check_stack_usage.py --core "${{ matrix.core }}"
+
+      - name: Upload stack-usage reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stack-usage-${{ matrix.core }}
+          path: obj/**/*.su
+          if-no-files-found: error
+
   qemu-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 30

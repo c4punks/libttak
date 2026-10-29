@@ -277,6 +277,41 @@ What changes on bare metal:
   build with FreeRTOS and lwIP (see [lwIP networking](#lwip-networking)),
   `/proc` statistics, and the `__int128` accelerator backend.
 
+## Stack usage analysis
+
+Bare-metal builds compile with `-fstack-usage` (disable with
+`make PLATFORM=baremetal STACK_USAGE=0`), so every object emits a `.su`
+file next to it in the `obj/` tree: one line per function with its static
+stack frame size in bytes. CI gates these against per-core thresholds
+(`.github/workflows/baremetal.yml`) using:
+
+```sh
+python3 scripts/baremetal/check_stack_usage.py --core cortex-m7
+```
+
+Thresholds live in `scripts/baremetal/stack_usage_thresholds.json`
+(20480 B per function on all Cortex-M cores as of this writing). The
+check is per-function, not a full call-graph bound — the script also
+prints the top-20 largest frames and their total as a recursion proxy.
+
+Measured on current code with `-Os` (frame sizes are nearly identical
+across Cortex-M0+/M3/M4F/M33/M7):
+
+| Function | Frame (bytes) |
+|---|---|
+| `ttak_bigscript_compile` | 18784 |
+| `ttak_lsh_process_block` | 6096 |
+| `ttak_matrix_invert` | 1648 |
+| `ttak_logger_log` | 1048 |
+| `ttak_mem_alloc_safe` | 96 |
+| `ttak_mem_free` | 56 |
+| `tt_create_map` / `tt_ins_map` / `tt_map_get` | 64 / 56 / 24 |
+| `ttak_ringbuf_push` / `ttak_ringbuf_pop` | 8 / 8 |
+
+Hot-path entry points (`mem`, `map`, `ringbuf`) stay under 100 B, so a
+small RTOS task stack (512 B–1 KiB) is safe as long as it does not call
+into the script/matrix/security modules; those need several KiB.
+
 ## FreeRTOS
 
 `PLATFORM=freertos` keeps the bare-metal build and adds real threads:
