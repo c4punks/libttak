@@ -448,7 +448,7 @@ Full documentation is generated through Doxygen.
 
 GitHub Pages documentation:
 
-https://religiya-serdtsa.github.io/libttak/
+https://c4punks.github.io/libttak/
 
 Documentation is rebuilt automatically on every push to `main`.
 
