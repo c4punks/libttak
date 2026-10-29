@@ -39,8 +39,12 @@ static volatile uint32_t g_isr_next;
 static volatile uint32_t g_isr_pushed;
 
 /* TTAK_IRQ0_Handler overrides the weak alias in startup_cortex_m.c. */
+/* Pushes stop at ISR_TEST_ITEMS: a firing that delivers the last payload
+ * must not run over, or g_isr_pushed overshoots the exact count the task
+ * asserts. */
 void TTAK_IRQ0_Handler(void) {
     for (int i = 0; i < 4; ++i) {
+        if (g_isr_next >= ISR_TEST_ITEMS) return;
         uint32_t v = g_isr_next;
         if (ttak_ringbuf_push_isr(&g_rb, &v)) {
             g_isr_next = v + 1;
