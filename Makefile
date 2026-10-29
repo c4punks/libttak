@@ -128,6 +128,14 @@ override EMBEDDED := 1
 CFLAGS = -std=c17 -Wall -Wextra -Iinclude $(MCU_FLAGS) $(BAREMETAL_OPT) \
          -ffunction-sections -fdata-sections \
          -DTTAK_PLATFORM_BAREMETAL=1 -DEMBEDDED=1 $(EXTRA_CFLAGS)
+
+# Emit per-function stack frame sizes (.su files) for the stack-usage CI
+# gate. Enabled by default for bare-metal builds only; host builds are
+# unaffected. Pass STACK_USAGE=0 to disable.
+STACK_USAGE ?= 1
+ifeq ($(STACK_USAGE),1)
+CFLAGS += -fstack-usage
+endif
 LDFLAGS = $(MCU_FLAGS) -Wl,--gc-sections $(EXTRA_LDFLAGS)
 endif
 ifeq ($(PLATFORM),freertos)

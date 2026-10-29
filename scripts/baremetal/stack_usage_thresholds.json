@@ -1,0 +1,10 @@
+{
+  "comment": "Per-architecture per-function stack frame limits (bytes) for -fstack-usage CI gate. Values are measured max frames on current code plus ~9% headroom; the current maximum is ttak_bigscript_compile at 18784 B on every Cortex-M core. Recalibrate with scripts/baremetal/check_stack_usage.py after major changes.",
+  "thresholds": {
+    "cortex-m0plus": 20480,
+    "cortex-m3": 20480,
+    "cortex-m4f": 20480,
+    "cortex-m33": 20480,
+    "cortex-m7": 20480
+  }
+}
