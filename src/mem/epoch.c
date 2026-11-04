@@ -189,10 +189,11 @@ typedef struct {
 TTAK_VIS_DEFAULT ttak_epoch_manager_t g_epoch_mgr = {0};
 
 /**
- * @brief Lock-free cache of retired nodes to avoid alloc/free flapping.
+ * @brief Mutex-protected cache of retired nodes to avoid alloc/free flapping.
  */
 static ttak_retired_node_t * _Atomic g_retired_node_pool = NULL;
 static uint32_t _Atomic g_retired_node_pool_count = 0;
+static pthread_mutex_t g_retired_node_pool_lock = PTHREAD_MUTEX_INITIALIZER;
 
 /**
  * @brief Global OLS plane storage.
@@ -273,27 +274,15 @@ TTAK_VIS_DEFAULT uint32_t _Atomic g_tid_counter = 0;
 /* --- Retired node cache helpers --- */
 
 static inline ttak_retired_node_t *epoch_node_pool_acquire(void) {
-    while (1) {
-        ttak_retired_node_t *head =
-            (ttak_retired_node_t *)TT_ATOMIC_LOAD_PTR((void * _Atomic *)&g_retired_node_pool,
-                                                      memory_order_acquire);
-        if (!head) {
-            break;
-        }
-        ttak_retired_node_t *next = head->next;
-        void *expected = head;
-        if (TT_ATOMIC_CAS_WEAK_PTR((void * _Atomic *)&g_retired_node_pool, &expected, next,
-                                   memory_order_acq_rel, memory_order_acquire)) {
-            uint32_t prev = TT_ATOMIC_FETCH_ADD_U32(&g_retired_node_pool_count, (uint32_t)-1,
-                                                    memory_order_relaxed);
-            if (TTAK_UNLIKELY(prev == 0)) {
-                TT_ATOMIC_FETCH_ADD_U32(&g_retired_node_pool_count, 1, memory_order_relaxed);
-            }
-            head->next = NULL;
-            return head;
-        }
+    pthread_mutex_lock(&g_retired_node_pool_lock);
+    ttak_retired_node_t *head = g_retired_node_pool;
+    if (head) {
+        g_retired_node_pool = head->next;
+        g_retired_node_pool_count--;
+        head->next = NULL;
     }
-    return (ttak_retired_node_t *)ttak_dangerous_calloc(1, sizeof(ttak_retired_node_t));
+    pthread_mutex_unlock(&g_retired_node_pool_lock);
+    return head ? head : (ttak_retired_node_t *)ttak_dangerous_calloc(1, sizeof(ttak_retired_node_t));
 }
 
 static inline void epoch_node_pool_release(ttak_retired_node_t *node) {
@@ -303,24 +292,16 @@ static inline void epoch_node_pool_release(ttak_retired_node_t *node) {
     node->ptr = NULL;
     node->cleanup = NULL;
 
-    uint32_t cached = TT_ATOMIC_LOAD_U32(&g_retired_node_pool_count, memory_order_relaxed);
-    if (cached >= TTAK_EPOCH_NODE_POOL_LIMIT) {
+    pthread_mutex_lock(&g_retired_node_pool_lock);
+    if (g_retired_node_pool_count >= TTAK_EPOCH_NODE_POOL_LIMIT) {
+        pthread_mutex_unlock(&g_retired_node_pool_lock);
         ttak_dangerous_free(node);
         return;
     }
-
-    while (1) {
-        ttak_retired_node_t *head =
-            (ttak_retired_node_t *)TT_ATOMIC_LOAD_PTR((void * _Atomic *)&g_retired_node_pool,
-                                                      memory_order_acquire);
-        node->next = head;
-        void *expected = head;
-        if (TT_ATOMIC_CAS_WEAK_PTR((void * _Atomic *)&g_retired_node_pool, &expected, node,
-                                   memory_order_release, memory_order_acquire)) {
-            TT_ATOMIC_FETCH_ADD_U32(&g_retired_node_pool_count, 1, memory_order_relaxed);
-            return;
-        }
-    }
+    node->next = g_retired_node_pool;
+    g_retired_node_pool = node;
+    g_retired_node_pool_count++;
+    pthread_mutex_unlock(&g_retired_node_pool_lock);
 }
 
 /* --- Internal helpers --- */

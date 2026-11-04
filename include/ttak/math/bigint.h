@@ -28,7 +28,7 @@ typedef struct ttak_bigint {
         limb_t sso_buf[TTAK_BIGINT_SSO_LIMIT];
     } data;
 #ifndef _MSC_VER
-    alignas(ttak_max_align_t) char padding[0];
+    alignas(alignof(ttak_max_align_t)) char padding[0];
 #endif
 } ttak_bigint_t;
 
