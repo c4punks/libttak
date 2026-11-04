@@ -58,7 +58,7 @@ typedef struct {
      */
     int       is_static;
 #ifndef _MSC_VER
-    alignas(ttak_max_align_t) char padding[0];
+    alignas(alignof(ttak_max_align_t)) char padding[0];
 #endif
 } ttak_map_t;
 
