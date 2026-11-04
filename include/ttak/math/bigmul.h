@@ -11,7 +11,7 @@ typedef struct ttak_bigmul {
     ttak_bigint_t rhs;
     ttak_bigint_t product;
 #ifndef _MSC_VER
-    alignas(ttak_max_align_t) char padding[0];
+    alignas(alignof(ttak_max_align_t)) char padding[0];
 #endif
 } ttak_bigmul_t;
 
