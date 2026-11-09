@@ -6,7 +6,7 @@ This document preserves the academic and historical lineage of the mathematical 
 
 ## `ttak_math_lane_mul` (formerly `ttak_math_dawonsul_lane_mul`)
 
-- **Historical concept:** Dawonsul (多變數獨立法) — independent lane processing for multivariate linear systems, associated with the works of Hong Jeong-ha and collaborators.
+- **Historical concept:** Dawonsul (多元法) — independent lane processing for multivariate linear systems, associated with the works of Hong Jeong-ha and collaborators. Extended from 四元術 of China.
 - **Reference:** Hong Jeong-ha, *"Guiljip (九一集)"*, 1660s.
 - **Application in code:** Matrix-vector lane multiplication used in `ttak_matrix_multiply_vec`. Each variable lane is processed independently to maximize throughput via aligned-limb FMA-style accumulation.
 
