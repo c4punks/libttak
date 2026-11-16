@@ -1,5 +1,6 @@
 /* TCP over the loopback interface through the endpoint, poller, view, io
  * and session layers. Runs on POSIX hosts and, with NET=lwip, on lwIP. */
+#include <errno.h>
 #include <string.h>
 #include <malloc.h>
 
@@ -235,6 +236,84 @@ static void test_zerocopy_view(void) {
     close_pair(&c);
 }
 
+static void check_view(conn_t *c, const unsigned char *msg, size_t len, size_t max_len,
+                       _Bool use_lattice) {
+    ssize_t sent;
+    do {
+        sent = send(c->client_fd, msg, len, 0);
+    } while (sent < 0 && errno == EINTR);
+    ASSERT(sent == (ssize_t)len);
+    ttak_net_view_t view;
+    ttak_net_view_init(&view);
+    ASSERT(ttak_net_view_from_endpoint(&view, c->server, c->owner, max_len, 0,
+                                       ttak_get_tick_count()) == TTAK_IO_SUCCESS);
+    ASSERT(view.len == len);
+    ASSERT((view.slot != NULL) == use_lattice);
+    ASSERT(memcmp(ttak_net_view_data(&view), msg, len) == 0);
+    ttak_net_view_release(&view);
+}
+
+static void test_lattice_auto_load(void) {
+#if TTAK_PLATFORM_BAREMETAL
+    const _Bool expected_lattice = false;
+#else
+    const _Bool expected_lattice = true;
+#endif
+    conn_t c = connect_pair();
+    unsigned char msg[64];
+    for (size_t i = 0; i < sizeof(msg); ++i) msg[i] = (unsigned char)i;
+    ttak_net_endpoint_attr_t attr = {
+        .role_flags = TTAK_NET_ROLE_SERVER | TTAK_NET_ROLE_LATTICE_AUTO,
+    };
+    ttak_net_endpoint_set_role(c.server, &attr, c.owner, ttak_get_tick_count());
+
+    ttak_net_lattice_set_load(74, 100);
+    ASSERT(!ttak_net_lattice_auto_enabled());
+    check_view(&c, msg, sizeof(msg), sizeof(msg), false);
+    ttak_net_lattice_set_load(75, 100);
+    ASSERT(ttak_net_lattice_auto_enabled() == expected_lattice);
+    check_view(&c, msg, sizeof(msg), sizeof(msg), expected_lattice);
+    ttak_net_lattice_set_load(50, 100);
+    ASSERT(ttak_net_lattice_auto_enabled() == expected_lattice);
+    check_view(&c, msg, sizeof(msg), sizeof(msg), expected_lattice);
+    ttak_net_lattice_set_load(49, 100);
+    ASSERT(!ttak_net_lattice_auto_enabled());
+    check_view(&c, msg, sizeof(msg), sizeof(msg), false);
+
+    attr.role_flags = TTAK_NET_ROLE_SERVER | TTAK_NET_ROLE_LATTICE_ACCEL;
+    ttak_net_endpoint_set_role(c.server, &attr, c.owner, ttak_get_tick_count());
+    check_view(&c, msg, sizeof(msg), sizeof(msg), expected_lattice);
+
+    ASSERT(ttak_net_endpoint_set_nonblocking(c.server, c.owner, true,
+                                             ttak_get_tick_count()) == TTAK_IO_SUCCESS);
+    ttak_net_view_t view;
+    ttak_net_view_init(&view);
+    ASSERT(ttak_net_view_from_endpoint(&view, c.server, c.owner, sizeof(msg), 0,
+                                       ttak_get_tick_count()) == TTAK_IO_ERR_NEEDS_RETRY);
+    ASSERT(view.region.data == NULL && view.slot == NULL);
+    ttak_net_view_release(&view);
+    ttak_net_lattice_set_load(0, 0);
+    close_pair(&c);
+}
+
+static void test_lattice_view_limit(void) {
+    conn_t c = connect_pair();
+    unsigned char msg[64];
+    for (size_t i = 0; i < sizeof(msg); ++i) msg[i] = (unsigned char)i;
+    ttak_net_endpoint_attr_t attr = {
+        .role_flags = TTAK_NET_ROLE_SERVER | TTAK_NET_ROLE_LATTICE_ACCEL,
+    };
+    ttak_net_endpoint_set_role(c.server, &attr, c.owner, ttak_get_tick_count());
+#if TTAK_PLATFORM_BAREMETAL
+    const _Bool expected_lattice = false;
+#else
+    const _Bool expected_lattice = true;
+#endif
+    check_view(&c, msg, 7, 7, expected_lattice);
+    check_view(&c, msg + 7, sizeof(msg) - 7, sizeof(msg) - 7, expected_lattice);
+    close_pair(&c);
+}
+
 /* The peer closing shows up as readable with a zero-byte read. */
 static void test_peer_close(void) {
     conn_t c = connect_pair();
@@ -265,6 +344,8 @@ int main(void) {
     RUN_TEST(test_sync_bulk_transfer);
     RUN_TEST(test_sync_io_returns_memory);
     RUN_TEST(test_zerocopy_view);
+    RUN_TEST(test_lattice_auto_load);
+    RUN_TEST(test_lattice_view_limit);
     RUN_TEST(test_peer_close);
     RUN_TEST(test_session_lifecycle);
     return 0;
