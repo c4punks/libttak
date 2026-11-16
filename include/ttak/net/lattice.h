@@ -82,6 +82,20 @@ void ttak_net_lattice_set_worker_id(uint32_t tid);
 uint32_t ttak_net_lattice_get_worker_id(void);
 
 /**
+ * @brief Reports aggregate worker load for automatic lattice activation.
+ *
+ * Automatic mode turns on at 75% utilization and stays on until utilization
+ * falls below 50%. A zero capacity disables automatic mode. Explicit
+ * TTAK_NET_ROLE_LATTICE_ACCEL endpoints are not affected by this setting.
+ */
+void ttak_net_lattice_set_load(uint32_t active, uint32_t capacity);
+
+/**
+ * @brief Returns whether automatic lattice acceleration is currently active.
+ */
+_Bool ttak_net_lattice_auto_enabled(void);
+
+/**
  * @brief Ensures the current lattice has a successor allocated when needed.
  */
 ttak_net_lattice_t* ttak_net_lattice_ensure_next(ttak_net_lattice_t *lat, uint64_t now);

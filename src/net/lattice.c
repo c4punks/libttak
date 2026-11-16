@@ -138,6 +138,7 @@ static _Thread_local uint32_t tls_worker_id = 0;
     (atomic_load_explicit(&(node)->compact_state, memory_order_acquire) != 0U)
 
 static _Atomic uint32_t g_lattice_compact_counter = 0;
+static _Atomic bool g_lattice_auto_enabled = false;
 
 static ttak_net_lattice_t *global_default_lattice = NULL;
 static pthread_once_t lattice_once = PTHREAD_ONCE_INIT;
@@ -335,6 +336,27 @@ uint32_t ttak_net_lattice_get_worker_id(void) {
     return tls_worker_id;
 }
 
+void ttak_net_lattice_set_load(uint32_t active, uint32_t capacity) {
+#if TTAK_PLATFORM_BAREMETAL
+    (void)active;
+    (void)capacity;
+    atomic_store_explicit(&g_lattice_auto_enabled, false, memory_order_relaxed);
+#else
+    _Bool enabled = false;
+    if (capacity > 0) {
+        uint64_t load = (uint64_t)active * 100ULL;
+        uint64_t capacity_pct = (uint64_t)capacity;
+        _Bool was_enabled = atomic_load_explicit(&g_lattice_auto_enabled, memory_order_relaxed);
+        enabled = was_enabled ? load >= capacity_pct * 50ULL : load >= capacity_pct * 75ULL;
+    }
+    atomic_store_explicit(&g_lattice_auto_enabled, enabled, memory_order_relaxed);
+#endif
+}
+
+_Bool ttak_net_lattice_auto_enabled(void) {
+    return atomic_load_explicit(&g_lattice_auto_enabled, memory_order_relaxed);
+}
+
 ttak_net_lattice_t* ttak_net_lattice_create(uint32_t dim, uint64_t now) {
     /* Ensure dim is power of 2 for masking */
     if (dim == 0 || (dim & (dim - 1)) != 0 || dim > TTAK_LATTICE_MAX_DIM) return NULL;
@@ -522,7 +544,7 @@ void ttak_net_lattice_mark_slot_acquired(ttak_net_lattice_t *lat, uint64_t now) 
     if (!lat || lat->capacity == 0) return;
     uint64_t used = ttak_atomic_add64(&lat->used_slots, 1);
     if (used >= lat->capacity) {
-        lat->is_full = true;
+        atomic_store_explicit((_Atomic bool *)&lat->is_full, true, memory_order_relaxed);
     }
     uint64_t scaled = used * 100;
     uint64_t threshold = (uint64_t)lat->capacity * 80;
@@ -535,7 +557,7 @@ void ttak_net_lattice_mark_slot_released(ttak_net_lattice_t *lat) {
     if (!lat || lat->capacity == 0) return;
     uint64_t remaining = ttak_atomic_sub64(&lat->used_slots, 1);
     if (remaining < lat->capacity) {
-        lat->is_full = false;
+        atomic_store_explicit((_Atomic bool *)&lat->is_full, false, memory_order_relaxed);
     }
     if (remaining == 0) {
         ttak_net_lattice_try_compact(lat);

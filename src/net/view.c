@@ -2,6 +2,7 @@
 #include <ttak/mols_control.h>
 #include <ttak/io/io.h>
 #include <ttak/compat/baremetal.h>
+#include <errno.h>
 #include <string.h>
 #include <stdlib.h>
 #ifdef _WIN32
@@ -69,8 +70,11 @@ ttak_io_status_t ttak_net_view_from_endpoint(ttak_net_view_t *view,
     int fd = payload->guard.fd;
     uint32_t tid = ttak_net_lattice_get_worker_id();
 
-    /* Transparent optimization: use Latin-square isolation if lattice is present and enabled */
-    if (lat && (payload->role_flags & TTAK_NET_ROLE_LATTICE_ACCEL)) {
+    _Bool use_lattice = lat && max_len > 0 &&
+                        ((payload->role_flags & TTAK_NET_ROLE_LATTICE_ACCEL) ||
+                         ((payload->role_flags & TTAK_NET_ROLE_LATTICE_AUTO) &&
+                          ttak_net_lattice_auto_enabled()));
+    if (use_lattice) {
         uint32_t mask = lat->mask;
         uint32_t my_tid = tid & mask;
 
@@ -84,9 +88,14 @@ ttak_io_status_t ttak_net_view_from_endpoint(ttak_net_view_t *view,
                     uint32_t lane = ttak_apply_mols_control(node_id, my_tid) & mask;
                     if (((r + c) & mask) == lane) {
                         ttak_net_lattice_slot_t *slot = &node->slots[r * dim + c];
-                        if (ttak_atomic_read64(&slot->state) == 0) {
-                            ttak_atomic_write64(&slot->state, 1);
-                            ssize_t valread = recv(fd, slot->data, TTAK_LATTICE_SLOT_SIZE, flags);
+                        uint64_t expected = 0;
+                        if (atomic_compare_exchange_strong_explicit(
+                                (_Atomic uint64_t *)&slot->state, &expected, 1,
+                                memory_order_acquire, memory_order_relaxed)) {
+                            int recv_cap = (int)(max_len < TTAK_LATTICE_SLOT_SIZE
+                                                     ? max_len
+                                                     : TTAK_LATTICE_SLOT_SIZE);
+                            ssize_t valread = recv(fd, slot->data, recv_cap, flags);
                             if (valread > 0) {
                                 slot->len = (uint32_t)valread;
                                 slot->timestamp = now;
@@ -108,6 +117,19 @@ ttak_io_status_t ttak_net_view_from_endpoint(ttak_net_view_t *view,
                                 return TTAK_IO_SUCCESS;
                             }
                             ttak_atomic_write64(&slot->state, 0);
+                            ttak_shared_net_endpoint_release(endpoint);
+                            if (valread == 0) return TTAK_IO_SUCCESS;
+#ifdef _WIN32
+                            int err = WSAGetLastError();
+                            if (err == WSAEINTR || err == WSAEWOULDBLOCK) {
+                                return TTAK_IO_ERR_NEEDS_RETRY;
+                            }
+#else
+                            if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) {
+                                return TTAK_IO_ERR_NEEDS_RETRY;
+                            }
+#endif
+                            return TTAK_IO_ERR_SYS_FAILURE;
                         }
                     }
                 }

@@ -25,7 +25,8 @@ typedef enum ttak_net_endpoint_role {
     TTAK_NET_ROLE_CLIENT = (1u << 0),
     TTAK_NET_ROLE_SERVER = (1u << 1),
     TTAK_NET_ROLE_CUSTOM = (1u << 2),
-    TTAK_NET_ROLE_LATTICE_ACCEL = (1u << 3)
+    TTAK_NET_ROLE_LATTICE_ACCEL = (1u << 3),
+    TTAK_NET_ROLE_LATTICE_AUTO = (1u << 4)
 } ttak_net_endpoint_role_t;
 
 struct ttak_net_endpoint;
